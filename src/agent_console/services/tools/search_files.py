@@ -5,7 +5,7 @@ step. Searching first lets the model locate the relevant passage and spend its
 context on that instead.
 """
 
-from agent_console.repositories.files import UnreadableFileError
+from agent_console.repositories.files import UnknownFileError, UnreadableFileError
 from agent_console.services.tools.context import ToolContext
 from agent_console.services.tools.registry import ToolRegistry
 
@@ -17,6 +17,7 @@ _MAX_HITS_PER_FILE = 5
 
 def register(registry: ToolRegistry, context: ToolContext) -> None:
     files = context.files
+    user_id = context.user_id
 
     @registry.tool(
         name="search_uploaded_files",
@@ -28,10 +29,7 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         parameters={
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Text to look for. Case-insensitive.",
-                },
+                "query": {"type": "string", "description": "Text to look for. Case-insensitive."},
                 "name": {
                     "type": "string",
                     "description": "Optional: restrict the search to one file.",
@@ -40,23 +38,23 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             "required": ["query"],
         },
     )
-    def search_uploaded_files(query: str, name: str | None = None) -> str:
+    async def search_uploaded_files(query: str, name: str | None = None) -> str:
         needle = query.strip().lower()
         if not needle:
             return "Error: query is empty."
 
         try:
-            records = [files.get(name)] if name else files.list()
-        except LookupError as exc:
+            rows = [await files.get(user_id, name)] if name else await files.list_for(user_id)
+        except UnknownFileError as exc:
             return f"Error: {exc}"
-        if not records:
+        if not rows:
             return "No files have been uploaded."
 
         blocks: list[str] = []
-        for record in records:
+        for row in rows:
             try:
-                content = files.text(record.id)
-            except (UnreadableFileError, LookupError):
+                content = await files.text(user_id, str(row.id))
+            except (UnreadableFileError, UnknownFileError):
                 continue
 
             hits: list[str] = []
@@ -71,8 +69,8 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
 
             if hits:
                 more = " (more matches not shown)" if position != -1 else ""
-                blocks.append(f"{record.name}{more}\n" + "\n".join(hits))
+                blocks.append(f"{row.name}{more}\n" + "\n".join(hits))
 
         if not blocks:
-            return f"No matches for {query!r} in {len(records)} file(s)."
+            return f"No matches for {query!r} in {len(rows)} file(s)."
         return "\n\n".join(blocks)

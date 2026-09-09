@@ -31,9 +31,16 @@ export function renderMarkdown(src: string): string {
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|\W)\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    // Absolute http(s) or a same-origin path — the download links the agent
+    // hands back are relative, and anything else (javascript:, data:) is left
+    // as plain text on purpose. The href is already escaped, so it cannot
+    // break out of the attribute.
     .replace(
-      /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener">$1</a>',
+      /\[([^\]]+)\]\((https?:\/\/[^)\s]+|\/[^)\s]*)\)/g,
+      (_match, label: string, href: string) =>
+        href.startsWith('/')
+          ? `<a href="${href}">${label}</a>`
+          : `<a href="${href}" target="_blank" rel="noopener">${label}</a>`,
     )
 
   const out: string[] = []

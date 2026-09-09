@@ -21,12 +21,31 @@ from agent_console.models.events import (
     ErrorEvent,
     ReasoningDeltaEvent,
     TextDeltaEvent,
+    ToolCallDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
 )
 from agent_console.services.tools import ToolRegistry
 
 __all__ = ["AgentService"]
+
+# Loading a skill costs a round trip but produces no progress, so it is not
+# charged to the step budget. This bounds how many such rounds a model can take
+# before the loop gives up on it ever doing anything else.
+SKILL_TOOL = "read_skill"
+_SKILL_ALLOWANCE = 3
+
+
+def _describe_upstream_failure(exc: BaseException) -> str:
+    """Human-readable failure; httpx timeouts often stringify to nothing useful."""
+    if isinstance(exc, httpx.TimeoutException):
+        return (
+            "The model timed out mid-reply. Long documents can take more than "
+            "a few minutes to write into write_file — try a shorter page count, "
+            "or wait and send the request again."
+        )
+    detail = str(exc).strip()
+    return detail or f"{type(exc).__name__}: the model endpoint failed"
 
 
 class AgentService:
@@ -69,37 +88,58 @@ class AgentService:
             f"{index}"
         )
 
-    async def run(self, messages: list[dict[str, Any]]) -> AsyncIterator[AgentEvent]:
-        """Drive the loop, emitting typed events the UI renders by type."""
+    async def run(
+        self,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        effort: str | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Drive the loop, emitting typed events the UI renders by type.
+
+        `effort` is passed through to the endpoint, which shortens the model's
+        thinking. It also caps the loop: at minimal effort the point is a fast
+        answer, so a long tool chain would defeat it.
+        """
         conversation: list[dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt()},
             *messages,
         ]
 
         try:
-            model = await self._upstream.resolve_model()
+            chosen = model or await self._upstream.resolve_model()
         except (httpx.HTTPError, UpstreamError, KeyError) as exc:
             yield ErrorEvent(message=f"Cannot reach {self._settings.upstream} — {exc}")
             return
 
-        for step in range(self._settings.max_steps):
+        max_steps = self._step_budget(effort)
+        steps_used = 0
+
+        # The ceiling is on tool rounds, but the extra iterations let a model
+        # load skills first without those reads eating the budget.
+        for _ in range(max_steps + _SKILL_ALLOWANCE):
+            if steps_used >= max_steps:
+                break
+
             assistant_message: dict[str, Any] | None = None
             try:
                 chunks = self._upstream.stream_completion(
-                    model=model,
+                    model=chosen,
                     messages=conversation,
                     tools=self._tools.schemas,
                     known_tool_names=self._tools.names,
+                    effort=effort,
                 )
                 async for chunk in chunks:
                     if chunk.text is not None:
                         yield TextDeltaEvent(text=chunk.text)
                     elif chunk.reasoning is not None:
                         yield ReasoningDeltaEvent(text=chunk.reasoning)
+                    elif chunk.tool_progress is not None:
+                        yield ToolCallDeltaEvent(**chunk.tool_progress)
                     else:
                         assistant_message = chunk.message
             except (httpx.HTTPError, UpstreamError) as exc:
-                yield ErrorEvent(message=str(exc))
+                yield ErrorEvent(message=_describe_upstream_failure(exc))
                 return
 
             if assistant_message is None:
@@ -109,7 +149,17 @@ class AgentService:
             conversation.append(assistant_message)
             tool_calls = assistant_message.get("tool_calls")
             if not tool_calls:
-                yield DoneEvent(steps=step + 1)
+                # A reply with neither text nor tool calls is a failure wearing
+                # a success's clothes; saying so beats rendering a blank turn.
+                if not (assistant_message.get("content") or "").strip():
+                    yield ErrorEvent(
+                        message=(
+                            f"{chosen} returned an empty reply. The model may have "
+                            "failed to run — try another model in Settings."
+                        )
+                    )
+                    return
+                yield DoneEvent(steps=steps_used + 1)
                 return
 
             for call in tool_calls:
@@ -122,4 +172,76 @@ class AgentService:
 
                 conversation.append(build_tool_message(call_id, name, result))
 
-        yield ErrorEvent(message=f"Stopped after {self._settings.max_steps} tool steps.")
+            # Reading a skill is setup, not progress toward the answer. Charging
+            # it to the budget spent half of a minimal-effort run on loading
+            # instructions the model then had no room left to act on.
+            if any(call["function"]["name"] != SKILL_TOOL for call in tool_calls):
+                steps_used += 1
+
+        async for event in self._wrap_up(conversation, chosen, effort, max_steps):
+            yield event
+
+    async def _wrap_up(
+        self,
+        conversation: list[dict[str, Any]],
+        model: str,
+        effort: str | None,
+        max_steps: int,
+    ) -> AsyncIterator[AgentEvent]:
+        """Answer with what the tools already returned, budget spent.
+
+        Ending on 'Stopped after N tool steps' threw away real work: the run
+        that prompted this had already written the user's document and then
+        reported nothing but the error. One more call, without tools, turns
+        that into the answer the work had earned.
+        """
+        conversation.append(
+            {
+                "role": "system",
+                "content": (
+                    "The tool budget for this turn is spent. Answer now using "
+                    "only what the tool results above already gave you. If a "
+                    "file was written, give its download link. If the task is "
+                    "unfinished, say briefly what is left and that raising "
+                    "Effort in Settings allows more steps."
+                ),
+            }
+        )
+
+        answered = False
+        try:
+            chunks = self._upstream.stream_completion(
+                model=model,
+                messages=conversation,
+                tools=[],
+                known_tool_names=set(),
+                effort=effort,
+            )
+            async for chunk in chunks:
+                if chunk.text is not None:
+                    answered = True
+                    yield TextDeltaEvent(text=chunk.text)
+                elif chunk.reasoning is not None:
+                    yield ReasoningDeltaEvent(text=chunk.reasoning)
+        except (httpx.HTTPError, UpstreamError) as exc:
+            yield ErrorEvent(message=_describe_upstream_failure(exc))
+            return
+
+        if not answered:
+            yield ErrorEvent(
+                message=(
+                    f"Stopped after {max_steps} tool steps without an answer. "
+                    "Raise Effort in Settings to allow more."
+                )
+            )
+            return
+        yield DoneEvent(steps=max_steps)
+
+    def _step_budget(self, effort: str | None) -> int:
+        """How many tool rounds this effort level is allowed.
+
+        Backs the effort control with something that definitely works,
+        independent of what the endpoint does with `reasoning_effort`.
+        """
+        ceiling = self._settings.max_steps
+        return min(ceiling, {"minimal": 2, "low": 4, "medium": 8}.get(effort or "", ceiling))

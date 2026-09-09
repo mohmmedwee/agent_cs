@@ -1,0 +1,225 @@
+@import "tailwindcss";
+@import "./assets/fonts/noto-kufi-arabic/fonts.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokens copied from the Cleverso portal_fe design system so this console
+   sits alongside the other portals rather than looking like a separate
+   product. Do not hand-tune these values; change them upstream. */
+@theme {
+  --font-sans: "Noto Kufi Arabic", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-primary: #673CDB;
+  --color-primary-25: #F8F5FF;
+  --color-primary-50: #EBE0FF;
+  --color-primary-100: #DCC7FF;
+  --color-primary-200: #BB91FF;
+  --color-primary-300: #9D6CFA;
+  --color-primary-400: #8150E8;
+  --color-primary-600: #5833BA;
+
+  --color-secondary: #6B7280;
+  --color-secondary-25: #FCFCFD;
+  --color-secondary-100: #F3F4F6;
+  --color-secondary-200: #E5E7EB;
+  --color-secondary-300: #C6CAD2;
+  --color-secondary-400: #9CA3AF;
+  --color-secondary-disabled: #1C1B1B33;
+
+  --color-error: #F04438;
+  --color-error-50: #FEF3F2;
+  --color-error-100: #FDE4E2;
+  --color-error-200: #F9C6C1;
+  --color-error-300: #F38F87;
+  --color-error-400: #E85C50;
+  --color-error-500: #D91938;
+
+  --color-dark: #181819;
+  --color-dark-500: #343434;
+
+  --color-success: #3CB54A;
+  --color-success-50: #E9FAE9;
+  --color-success-100: #D3F2D3;
+
+  --color-warning: #FF8500;
+  --color-warning-50: #FFF3E5;
+  --color-warning-100: #FBB957;
+
+  --color-info: #FF6F33;
+
+  --color-surface: #ffffff;
+  --color-canvas: #FCFCFD;
+  --color-elevated: #ffffff;
+
+  --color-glassy: rgba(249, 250, 251, 0.75);
+  --color-glassy-overlay: rgba(55, 65, 81, 0.80);
+  --color-glassy-sm: rgba(237, 240, 243, 0.80);
+  --color-glassy-md: rgba(229, 231, 235, 0.60);
+  --color-glassy-menu: rgba(251, 251, 251, 0.8);
+
+  --shadow: 0 0 8px 0 rgba(0, 0, 0, 0.16);
+  --shadow-sm: 0 1px 5px -9px rgba(16, 24, 40, 0.10);
+  --shadow-md: 0 10px 15px -3px rgba(16, 24, 40, 0.10);
+  --shadow-lg: 0 25px 50px -12px rgba(16, 24, 40, 0.15);
+}
+
+@layer base {
+  .dark {
+    --color-primary-25: #1a1428;
+    --color-primary-50: #241a3a;
+    --color-primary-100: #3a2a5c;
+    --color-primary-200: #5b3f9a;
+
+    --color-secondary: #9CA3AF;
+    --color-secondary-25: #121214;
+    --color-secondary-100: #1a1a1e;
+    --color-secondary-200: #2e303a;
+    --color-secondary-300: #4b5563;
+    --color-secondary-400: #6b7280;
+    --color-secondary-disabled: #ffffff33;
+
+    --color-error-50: #3f1515;
+    --color-error-100: #5c1d1d;
+
+    --color-success-50: #14301a;
+    --color-success-100: #1e4a28;
+
+    --color-warning-50: #3a2410;
+    --color-warning-100: #5c3a18;
+
+    --color-dark: #f3f4f6;
+    --color-dark-500: #d1d5db;
+
+    --color-surface: #1c1c20;
+    --color-canvas: #121214;
+    --color-elevated: #242428;
+
+    --color-glassy: rgba(28, 28, 32, 0.85);
+    --color-glassy-overlay: rgba(0, 0, 0, 0.7);
+    --color-glassy-sm: rgba(36, 36, 40, 0.85);
+    --color-glassy-md: rgba(46, 48, 58, 0.7);
+    --color-glassy-menu: rgba(28, 28, 32, 0.82);
+
+    --shadow: 0 0 8px 0 rgba(0, 0, 0, 0.45);
+    --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+  }
+
+  html {
+    font-size: 16px;
+    font-family: var(--font-sans);
+    color: var(--color-dark);
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  html[lang="en"] {
+    direction: ltr;
+  }
+
+  html[lang="ar"] {
+    direction: rtl;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-canvas);
+    color: var(--color-dark);
+  }
+
+  /* Keyboard users need to see focus; pointer users do not. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary-300);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5
+      text-sm font-semibold text-white transition
+      disabled:cursor-not-allowed disabled:opacity-60;
+    background: linear-gradient(180deg, var(--color-primary-300), var(--color-primary));
+  }
+
+  .btn-primary:not(:disabled):hover {
+    background: linear-gradient(180deg, var(--color-primary), var(--color-primary-600));
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2
+      text-sm font-medium text-secondary transition
+      hover:bg-secondary-100 hover:text-dark disabled:opacity-50;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-secondary-200 bg-surface px-4 py-2.5
+      text-sm text-dark transition placeholder:text-secondary-400
+      focus:border-primary-300 focus:outline-none;
+  }
+
+  .card {
+    @apply rounded-2xl border border-secondary-200 bg-surface shadow-sm;
+  }
+}
+
+/* Rendered markdown. Scoped so agent output cannot restyle the app. */
+.prose-agent {
+  @apply text-[0.9375rem] leading-relaxed;
+}
+.prose-agent > * + * {
+  @apply mt-3;
+}
+.prose-agent h1, .prose-agent h2, .prose-agent h3 {
+  @apply font-semibold text-dark;
+}
+.prose-agent h1 { @apply text-lg; }
+.prose-agent h2 { @apply text-base; }
+.prose-agent h3 { @apply text-sm uppercase tracking-wide text-secondary; }
+.prose-agent ul { @apply list-disc ps-5; }
+.prose-agent ol { @apply list-decimal ps-5; }
+/* Not `space-y-1`: applying it here compiles to a malformed selector and the
+   rule is dropped, so list items end up flush against each other. */
+.prose-agent li + li { @apply mt-1; }
+.prose-agent a { @apply text-primary underline underline-offset-2; }
+.prose-agent code {
+  @apply rounded-md bg-secondary-100 px-1.5 py-0.5 font-mono text-[0.85em];
+}
+.prose-agent pre {
+  @apply overflow-x-auto rounded-xl bg-dark p-4 text-[0.8125rem] text-secondary-200;
+  direction: ltr;
+  text-align: left;
+}
+.prose-agent pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
+.prose-agent blockquote {
+  @apply border-s-2 border-primary-200 ps-4 text-secondary;
+}
+.prose-agent table {
+  @apply w-full border-collapse text-sm;
+}
+.prose-agent th, .prose-agent td {
+  @apply border border-secondary-200 px-3 py-2 text-start;
+}
+.prose-agent th { @apply bg-secondary-100 font-semibold; }
+
+/* Scratch work, not the answer: same markdown, quieter and tighter. Ordered
+   after the base rules so it wins on equal specificity. */
+.prose-agent--compact {
+  @apply text-xs text-secondary;
+}
+.prose-agent--compact > * + * {
+  @apply mt-2;
+}
+.prose-agent--compact h1 { @apply text-sm; }
+.prose-agent--compact h2 { @apply text-xs; }
+.prose-agent--compact h3 { @apply text-xs normal-case tracking-normal; }
+.prose-agent--compact ul, .prose-agent--compact ol { @apply ps-4; }
+.prose-agent--compact pre { @apply rounded-lg p-3 text-[0.75rem]; }
+.prose-agent--compact table { @apply text-xs; }
+.prose-agent--compact th, .prose-agent--compact td { @apply px-2 py-1; }

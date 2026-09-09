@@ -1,17 +1,35 @@
 """Request and response schemas for the chat endpoint."""
 
-from typing import Any
+from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-__all__ = ["ChatRequest"]
+__all__ = ["ChatRequest", "Effort", "ModelInfo", "ModelListResponse"]
+
+# Maps onto the upstream `reasoning_effort` parameter, which measurably shortens
+# this model's thinking: "minimal" cut it by about two thirds against baseline.
+Effort = Literal["minimal", "low", "medium", "high"]
 
 
 class ChatRequest(BaseModel):
-    """Conversation state is replayed by the client on every request.
+    """One user turn against a stored conversation.
 
-    Move this server-side, keyed by conversation id, before adding multi-user
-    support, prompt caching, or context trimming.
+    Prior turns are loaded server-side from the conversation, so the client
+    sends only what is new.
     """
 
-    messages: list[dict[str, Any]] = Field(min_length=1)
+    conversation_id: UUID
+    message: str = Field(min_length=1)
+    model: str | None = None
+    effort: Effort | None = None
+
+
+class ModelInfo(BaseModel):
+    id: str
+    loaded: bool = False
+
+
+class ModelListResponse(BaseModel):
+    models: list[ModelInfo]
+    current: str | None = None

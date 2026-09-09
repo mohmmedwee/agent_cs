@@ -11,6 +11,8 @@ __all__ = ["register"]
 
 def register(registry: ToolRegistry, context: ToolContext) -> None:
     fetcher = context.pages
+    cache = context.cache
+    ttl = context.settings.cache_fetch_ttl
 
     @registry.tool(
         name="fetch_url",
@@ -28,11 +30,18 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         },
     )
     async def fetch_url(url: str) -> str:
+        target = url.strip()
+        if hit := await cache.get("page", target):
+            return hit
+
         try:
-            return await fetcher.fetch(url)
+            body = await fetcher.fetch(target)
         except SearchError as exc:
             return f"Error: {exc}"
         except httpx.HTTPStatusError as exc:
-            return f"Error: {url} returned HTTP {exc.response.status_code}"
+            return f"Error: {target} returned HTTP {exc.response.status_code}"
         except httpx.HTTPError as exc:
-            return f"Error: could not fetch {url} — {type(exc).__name__}: {exc}"
+            return f"Error: could not fetch {target} — {type(exc).__name__}: {exc}"
+
+        await cache.set("page", target, body, ttl)
+        return body

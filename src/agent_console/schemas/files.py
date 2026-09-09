@@ -1,15 +1,28 @@
-"""Response schemas for the file endpoints."""
+"""Request and response shapes for uploaded files."""
+
+from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel
 
-from agent_console.models.files import StoredFile
-
-__all__ = ["FileListResponse", "FileUploadResponse"]
+__all__ = ["FileListResponse", "FileResponse", "FileUploadResponse"]
 
 
-class FileUploadResponse(BaseModel):
-    files: list[StoredFile]
+class FileResponse(BaseModel):
+    id: UUID
+    name: str
+    size: int
+    content_type: str | None = None
+    is_text: bool
+    is_image: bool = False
+    uploaded_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class FileListResponse(BaseModel):
-    files: list[StoredFile]
+    files: list[FileResponse]
+
+
+class FileUploadResponse(BaseModel):
+    files: list[FileResponse]

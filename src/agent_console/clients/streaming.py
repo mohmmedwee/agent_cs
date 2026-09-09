@@ -15,10 +15,20 @@ from typing import Any
 
 from agent_console.models.chat import FunctionCall, ToolCall
 
-__all__ = ["SSE_DATA_PREFIX", "ToolCallAccumulator", "parse_sse_line", "salvage_text_call"]
+__all__ = [
+    "SSE_DATA_PREFIX",
+    "StreamFailed",
+    "ToolCallAccumulator",
+    "parse_sse_line",
+    "salvage_text_call",
+]
 
 SSE_DATA_PREFIX = "data: "
 _DONE_SENTINEL = "[DONE]"
+
+
+class StreamFailed(RuntimeError):
+    """The endpoint reported a failure inside an otherwise-200 stream."""
 
 
 def parse_sse_line(line: str) -> dict[str, Any] | None:
@@ -26,28 +36,57 @@ def parse_sse_line(line: str) -> dict[str, Any] | None:
 
     Returns None for keep-alives, non-data lines, the [DONE] sentinel, and
     malformed JSON — all of which callers should simply skip.
+
+    Raises StreamFailed when the frame carries an error. The endpoint answers
+    200 and only then streams `event: error`, so a failure looks exactly like a
+    successful empty completion unless it is checked for here — which is how a
+    dead model turned into a blank reply rather than a visible problem.
     """
     if not line.startswith(SSE_DATA_PREFIX):
         return None
     payload = line[len(SSE_DATA_PREFIX) :].strip()
     if payload == _DONE_SENTINEL:
         return None
+
     try:
-        return json.loads(payload)["choices"][0].get("delta") or {}
-    except (json.JSONDecodeError, KeyError, IndexError):
+        body = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+    if isinstance(body, dict) and (problem := body.get("error")):
+        detail = problem.get("message") if isinstance(problem, dict) else problem
+        raise StreamFailed(str(detail)[:400])
+
+    try:
+        return body["choices"][0].get("delta") or {}
+    except (KeyError, IndexError, TypeError):
         return None
 
 
 class ToolCallAccumulator:
     """Concatenates streamed tool-call fragments into complete calls."""
 
+    # Emit a progress tick at least this often so a silent multi-page write
+    # still shows the byte count climbing, without one SSE frame per token.
+    _PROGRESS_EVERY = 256
+
     def __init__(self) -> None:
         self._slots: dict[int, ToolCall] = {}
+        self._emitted_chars: dict[int, int] = {}
 
-    def add(self, deltas: list[dict[str, Any]] | None) -> None:
-        """Fold one delta's `tool_calls` array into the accumulated state."""
+    def add(self, deltas: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        """Fold one delta's `tool_calls` array; return progress for the UI.
+
+        Each returned dict is safe to forward as-is: name and size only, never
+        the argument body. Callers that only want the final calls can ignore it.
+        """
+        progress: list[dict[str, Any]] = []
         for fragment in deltas or []:
-            slot = self._slots.setdefault(fragment.get("index", 0), ToolCall())
+            index = int(fragment.get("index", 0))
+            slot = self._slots.setdefault(index, ToolCall())
+            name_before = slot.function.name
+            chars_before = len(slot.function.arguments)
+
             if call_id := fragment.get("id"):
                 slot.id = call_id
             function = fragment.get("function") or {}
@@ -55,6 +94,25 @@ class ToolCallAccumulator:
                 slot.function.name += name
             if arguments := function.get("arguments"):
                 slot.function.arguments += arguments
+
+            chars = len(slot.function.arguments)
+            last_emitted = self._emitted_chars.get(index, -self._PROGRESS_EVERY)
+            name_changed = slot.function.name != name_before
+            grew_enough = chars - last_emitted >= self._PROGRESS_EVERY
+            first_sight = chars_before == 0 and (chars > 0 or bool(slot.function.name))
+            if name_changed or grew_enough or first_sight or (
+                fragment.get("id") and not chars_before
+            ):
+                self._emitted_chars[index] = chars
+                progress.append(
+                    {
+                        "index": index,
+                        "id": slot.id,
+                        "name": slot.function.name,
+                        "arguments_chars": chars,
+                    }
+                )
+        return progress
 
     def result(self) -> list[ToolCall]:
         """Completed calls, ordered by their stream index."""

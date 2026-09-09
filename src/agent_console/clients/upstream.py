@@ -6,7 +6,12 @@ from typing import Any
 
 import httpx
 
-from agent_console.clients.streaming import ToolCallAccumulator, parse_sse_line, salvage_text_call
+from agent_console.clients.streaming import (
+    StreamFailed,
+    ToolCallAccumulator,
+    parse_sse_line,
+    salvage_text_call,
+)
 from agent_console.config import Settings
 from agent_console.models.chat import ToolCall, ToolSchema
 
@@ -22,12 +27,14 @@ class CompletionChunk:
     """One unit of progress from a streamed completion.
 
     Exactly one field is set. `text` and `reasoning` deltas arrive as they
-    stream; the assembled assistant message is emitted once at the end.
-    Reasoning is carried separately because it must not enter the transcript.
+    stream; `tool_progress` while a tool call's arguments are still growing;
+    the assembled assistant message is emitted once at the end. Reasoning is
+    carried separately because it must not enter the transcript.
     """
 
     text: str | None = None
     reasoning: str | None = None
+    tool_progress: dict[str, Any] | None = None
     message: dict[str, Any] | None = None
 
 
@@ -57,22 +64,78 @@ class UpstreamClient:
         self._resolved_model = models[0]["id"]
         return self._resolved_model
 
+    async def describe_image(
+        self, data_url: str, question: str, model: str, timeout: float
+    ) -> str:
+        """Ask a multimodal model about one image and return its answer.
+
+        Deliberately a plain request rather than part of the agent loop: the
+        image never enters the main conversation, so the reasoning model — which
+        cannot see — is never handed content it would fail on.
+        """
+        body = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
+            "temperature": 0.2,
+        }
+        response = await self._http.post(
+            f"{self._settings.upstream}/chat/completions", json=body, timeout=timeout
+        )
+        if response.status_code >= 400:
+            raise UpstreamError(
+                f"the vision model {model} rejected the image "
+                f"({response.status_code}): {response.text[:200]}"
+            )
+
+        message = response.json()["choices"][0]["message"]
+        answer = (message.get("content") or "").strip()
+        if not answer:
+            raise UpstreamError(f"{model} returned no description")
+        return answer
+
+    async def list_models(self) -> list[str]:
+        """Every model the endpoint reports, for the picker."""
+        response = await self._http.get(
+            f"{self._settings.upstream}/models",
+            timeout=self._settings.model_listing_timeout,
+        )
+        response.raise_for_status()
+        return [entry["id"] for entry in response.json().get("data") or []]
+
     async def stream_completion(
         self,
         model: str,
         messages: list[dict[str, Any]],
         tools: list[ToolSchema],
         known_tool_names: set[str],
+        effort: str | None = None,
     ) -> AsyncIterator[CompletionChunk]:
         """Stream one completion, yielding text deltas then the final message."""
-        body = {
+        body: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "tools": [tool.model_dump() for tool in tools],
-            "tool_choice": "auto",
             "stream": True,
             "temperature": 0.7,
         }
+        # Omitted rather than sent empty: an empty `tools` array alongside
+        # `tool_choice: auto` is rejected by some endpoints, and callers pass no
+        # tools precisely when they want prose and nothing else.
+        if tools:
+            body["tools"] = [tool.model_dump() for tool in tools]
+            body["tool_choice"] = "auto"
+        # Measured against this endpoint: "minimal" cuts reasoning length by
+        # roughly two thirds, which on a fixed token budget is the difference
+        # between getting an answer and spending it all on thinking.
+        if effort:
+            body["reasoning_effort"] = effort
         text_parts: list[str] = []
         accumulator = ToolCallAccumulator()
 
@@ -89,7 +152,12 @@ class UpstreamClient:
                 raise UpstreamError(f"upstream {response.status_code}: {detail}")
 
             async for line in response.aiter_lines():
-                delta = parse_sse_line(line)
+                try:
+                    delta = parse_sse_line(line)
+                except StreamFailed as exc:
+                    raise UpstreamError(
+                        f"{model} failed mid-response: {exc}"
+                    ) from exc
                 if delta is None:
                     continue
                 if chunk := delta.get("content"):
@@ -100,7 +168,8 @@ class UpstreamClient:
                 # but keep it out of `text_parts` — it is not part of the reply.
                 if thought := delta.get("reasoning_content"):
                     yield CompletionChunk(reasoning=thought)
-                accumulator.add(delta.get("tool_calls"))
+                for progress in accumulator.add(delta.get("tool_calls")):
+                    yield CompletionChunk(tool_progress=progress)
 
         full_text = "".join(text_parts)
         tool_calls: list[ToolCall] = accumulator.result() or salvage_text_call(

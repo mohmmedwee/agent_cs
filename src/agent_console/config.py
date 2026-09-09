@@ -16,13 +16,90 @@ class Settings(BaseSettings):
         default="http://172.25.44.38:1234/v1",
         description="Base URL of the OpenAI-compatible endpoint, including the /v1 path.",
     )
+
+    # --- vision -----------------------------------------------------------
+    # Images reach the model through the `view_image` tool rather than the
+    # conversation: the tool asks a multimodal model a question and returns the
+    # answer as text. That indirection is worth keeping even though the current
+    # chat model can see, because it means vision still works if the chat model
+    # is later switched to one that cannot, and an image never enters the
+    # transcript that gets replayed on every subsequent step.
+    vision_model: str = Field(
+        default="qwen/qwen3.8-27b",
+        description=(
+            "Multimodal model used to answer questions about images. Pointing "
+            "this at the chat model keeps one model resident: loading a second "
+            "one alongside it exhausts the host's memory."
+        ),
+    )
+    vision_timeout: float = Field(
+        default=300.0, gt=0, description="Seconds to wait for a vision answer."
+    )
+    max_image_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        gt=0,
+        description="Largest image sent to the vision model.",
+    )
+
+    # --- infrastructure -------------------------------------------------
+    # Postgres and Redis are shared with other projects on this host, so both
+    # are namespaced: a dedicated database, and a Redis logical db plus key
+    # prefix. Nothing here may ever issue FLUSHDB or FLUSHALL.
+    database_url: str = Field(
+        default="postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/agent_console",
+        description="Async SQLAlchemy URL for the application database.",
+    )
+    database_echo: bool = Field(default=False, description="Log every SQL statement.")
+
+    redis_url: str = Field(
+        default="redis://127.0.0.1:6379/11",
+        description="Redis URL. Logical db 11 is unused by the other apps on this host.",
+    )
+    redis_prefix: str = Field(
+        default="agentconsole:", description="Prefix on every key this app writes."
+    )
+    cache_search_ttl: int = Field(
+        default=3600, gt=0, description="Seconds to cache a web_search result."
+    )
+    cache_fetch_ttl: int = Field(
+        default=86_400, gt=0, description="Seconds to cache a fetched page."
+    )
+
+    # --- auth ------------------------------------------------------------
+    secret_key: str = Field(
+        default="dev-only-change-me",
+        description="Signs session cookies. Must be set to a real secret in production.",
+    )
+    session_ttl: int = Field(
+        default=60 * 60 * 24 * 14, gt=0, description="Session cookie lifetime in seconds."
+    )
+    cookie_secure: bool = Field(
+        default=False,
+        description="Send the session cookie only over HTTPS. Enable behind TLS.",
+    )
+    first_user_is_admin: bool = Field(
+        default=True,
+        description="Grant admin to the first account created, so there is a way in.",
+    )
     model: str | None = Field(
-        default=None,
-        description="Model id to use. Defaults to the first model the endpoint reports.",
+        default="qwen/qwen3.8-27b",
+        description=(
+            "Model id to use for chat. Pinned rather than left to 'whatever the "
+            "endpoint lists first', so loading another model cannot silently "
+            "change which one answers."
+        ),
     )
     max_steps: int = Field(default=8, gt=0, description="Tool-call rounds before the loop gives up.")
 
-    request_timeout: float = Field(default=300.0, gt=0)
+    request_timeout: float = Field(
+        default=1_800.0,
+        gt=0,
+        description=(
+            "Seconds allowed for one model stream. A multi-page write_file "
+            "spends this generating arguments with no intermediate reply — "
+            "300s was cutting those runs off mid-document."
+        ),
+    )
     connect_timeout: float = Field(default=10.0, gt=0)
     model_listing_timeout: float = Field(default=15.0, gt=0)
 
@@ -48,6 +125,10 @@ class Settings(BaseSettings):
         # shared libraries are full of skills that assume a repo and an editor
         # this server does not have. So the default is a curated set rather than
         # everything found on disk. Clear it to load all of them.
+        # Software-engineering skills are deliberately excluded. This is a
+        # general assistant, and skills that assume a repository, an issue
+        # tracker, or an editor cost context on every request while never
+        # matching what is actually asked.
         default_factory=lambda: {
             # This project's own skills.
             "answering-well",
@@ -57,34 +138,15 @@ class Settings(BaseSettings):
             "writing-deliverables",
             "replying-bilingually",
             "diagnosing-problems",
-            # Reasoning and communication — no codebase required.
+            # Thinking and explaining.
             "grilling",
             "teach",
-            "triage",
-            "retro",
-            "prototype",
-            "domain-modeling",
-            "codebase-design",
-            "context-engineering",
-            "to-spec",
-            "to-tickets",
             "to-questionnaire",
+            # Writing.
             "writing-guidelines",
             "writing-shape",
             "writing-fragments",
             "writing-beats",
-            # Building agents.
-            "langchain-fundamentals",
-            "langgraph-fundamentals",
-            "deep-agents-memory",
-            "mcp-builder",
-            # Python stack.
-            "python-design-patterns",
-            "python-project-structure",
-            "python-type-safety",
-            "python-testing-patterns",
-            "async-python-patterns",
-            "fastapi",
         },
         description=(
             "If non-empty, only these skill names are loaded. Use it to pull a few "
@@ -127,7 +189,12 @@ class Settings(BaseSettings):
         "## What you can actually do\n"
         "You have working, real-time access to the internet through `web_search` "
         "and `fetch_url`. You can read and write files, and do exact arithmetic. "
-        "These tools work right now.\n\n"
+        "You can also see images: call `view_image` with a specific question and "
+        "you get back an answer about what the picture contains. These tools work "
+        "right now.\n\n"
+        "Never say you cannot look at an image. You can — ask `view_image`. It "
+        "returns words, not pixels, so ask for exactly what you need and ask "
+        "again if you need more.\n\n"
         "Never say you cannot access the internet, cannot look things up, have no "
         "live data, or are limited to a training cutoff. That is false here. If "
         "you are tempted to apologise for not knowing something current, search "

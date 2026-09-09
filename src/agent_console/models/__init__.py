@@ -7,6 +7,7 @@ from agent_console.models.events import (
     ErrorEvent,
     ReasoningDeltaEvent,
     TextDeltaEvent,
+    ToolCallDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "StoredFile",
     "TextDeltaEvent",
     "ToolCall",
+    "ToolCallDeltaEvent",
     "ToolCallEvent",
     "ToolResultEvent",
     "ToolSchema",

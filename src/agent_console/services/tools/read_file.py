@@ -1,4 +1,4 @@
-"""Lets the model read the contents of an uploaded text file."""
+"""Lets the model read the contents of a file the current user uploaded."""
 
 from agent_console.repositories.files import UnknownFileError, UnreadableFileError
 from agent_console.services.tools.context import ToolContext
@@ -9,6 +9,7 @@ __all__ = ["register"]
 
 def register(registry: ToolRegistry, context: ToolContext) -> None:
     files = context.files
+    user_id = context.user_id
     max_chars = context.settings.max_file_chars
 
     @registry.tool(
@@ -34,11 +35,13 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             "required": ["name"],
         },
     )
-    def read_uploaded_file(name: str, offset: int = 0) -> str:
+    async def read_uploaded_file(name: str, offset: int = 0) -> str:
         try:
-            return files.read_text(name, max_chars=max_chars, offset=max(0, int(offset)))
+            return await files.read_text(
+                user_id, name, max_chars=max_chars, offset=max(0, int(offset))
+            )
         except UnknownFileError as exc:
-            available = ", ".join(record.name for record in files.list()) or "none"
-            return f"Error: {exc}. Uploaded files: {available}"
+            available = ", ".join(row.name for row in await files.list_for(user_id))
+            return f"Error: {exc}. Uploaded files: {available or 'none'}"
         except UnreadableFileError as exc:
             return f"Error: {exc}"

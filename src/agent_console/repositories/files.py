@@ -1,23 +1,33 @@
-"""On-disk storage for uploaded files.
+"""Uploaded files: metadata in Postgres, bytes on disk.
 
-Metadata lives in memory alongside the bytes on disk, which is enough for a
-single-process server. Swap this class for a database-backed one when you add
-multi-user support; nothing outside this module knows how storage works.
+Bytes stay on the filesystem because streaming them through the database buys
+nothing here. The row is the source of truth for what exists and who owns it,
+so a file with no row is invisible even if it is still on disk.
+
+Every method is scoped by `user_id`; one user can never reach another's file.
 """
 
 import unicodedata
-from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from agent_console.models.files import StoredFile
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from agent_console.db.models import StoredFileRow
 from agent_console.repositories.extraction import extract_text
+from agent_console.repositories.images import image_media_type
 
-__all__ = ["FileRepository", "FileTooLargeError", "UnknownFileError"]
+__all__ = [
+    "FileRepository",
+    "FileTooLargeError",
+    "UnknownFileError",
+    "UnreadableFileError",
+]
 
 
 class UnknownFileError(LookupError):
-    """No uploaded file matches the given id or name."""
+    """No file matches the given id or name for this user."""
 
 
 class FileTooLargeError(ValueError):
@@ -29,72 +39,106 @@ class UnreadableFileError(ValueError):
 
 
 def _safe_name(name: str) -> str:
-    """Strip any directory component so an upload can't escape the store."""
+    """Strip any directory component so an upload cannot escape the store."""
     cleaned = unicodedata.normalize("NFC", name).replace("\\", "/")
     return Path(cleaned).name or "unnamed"
 
 
 class FileRepository:
-    def __init__(self, directory: Path, max_bytes: int) -> None:
+    def __init__(self, session: AsyncSession, directory: Path, max_bytes: int) -> None:
+        self._session = session
         self._directory = directory
         self._max_bytes = max_bytes
         self._directory.mkdir(parents=True, exist_ok=True)
-        self._index: dict[str, StoredFile] = {}
 
-    def save(self, name: str, data: bytes, content_type: str | None = None) -> StoredFile:
+    def _path(self, storage_key: str) -> Path:
+        return self._directory / storage_key
+
+    async def save(
+        self, user_id: UUID, name: str, data: bytes, content_type: str | None = None
+    ) -> StoredFileRow:
         if len(data) > self._max_bytes:
             raise FileTooLargeError(
                 f"{name} is {len(data)} bytes; the limit is {self._max_bytes}"
             )
-        file_id = uuid4().hex[:12]
-        (self._directory / file_id).write_bytes(data)
-        record = StoredFile(
-            id=file_id,
-            name=_safe_name(name),
+
+        safe = _safe_name(name)
+        storage_key = uuid4().hex
+        self._path(storage_key).write_bytes(data)
+
+        row = StoredFileRow(
+            user_id=user_id,
+            name=safe,
+            storage_key=storage_key,
             size=len(data),
             content_type=content_type,
-            uploaded_at=datetime.now(timezone.utc),
             # "Can the agent read this?", not "are these bytes UTF-8?" — a .docx
             # is binary but perfectly readable once unpacked.
-            is_text=extract_text(data, _safe_name(name)) is not None,
+            is_text=extract_text(data, safe) is not None,
+            # Detected from the header, not the extension, because that is what
+            # the vision model will actually receive.
+            is_image=image_media_type(data) is not None,
         )
-        self._index[file_id] = record
-        return record
+        self._session.add(row)
+        await self._session.flush()
+        return row
 
-    def list(self) -> list[StoredFile]:
-        return sorted(self._index.values(), key=lambda f: f.uploaded_at)
+    async def list_for(self, user_id: UUID) -> list[StoredFileRow]:
+        result = await self._session.execute(
+            select(StoredFileRow)
+            .where(StoredFileRow.user_id == user_id)
+            .order_by(StoredFileRow.uploaded_at)
+        )
+        return list(result.scalars())
 
-    def get(self, ref: str) -> StoredFile:
+    async def get(self, user_id: UUID, ref: str) -> StoredFileRow:
         """Look up by id, then by exact name — the model tends to use the name."""
-        if ref in self._index:
-            return self._index[ref]
-        for record in self._index.values():
-            if record.name == ref:
-                return record
-        raise UnknownFileError(f"no uploaded file matches {ref!r}")
+        try:
+            row = await self._session.get(StoredFileRow, UUID(ref))
+            if row is not None and row.user_id == user_id:
+                return row
+        except (ValueError, AttributeError):
+            pass
 
-    def raw_bytes(self, ref: str) -> bytes:
-        """The stored bytes, for download."""
-        return (self._directory / self.get(ref).id).read_bytes()
+        result = await self._session.execute(
+            select(StoredFileRow).where(
+                StoredFileRow.user_id == user_id, StoredFileRow.name == ref
+            )
+        )
+        row = result.scalars().first()
+        if row is None:
+            raise UnknownFileError(f"no uploaded file matches {ref!r}")
+        return row
 
-    def text(self, ref: str) -> str:
-        """The file's full text. Raises if we have no way to read it."""
-        record = self.get(ref)
-        content = extract_text((self._directory / record.id).read_bytes(), record.name)
+    async def raw_bytes(self, user_id: UUID, ref: str) -> bytes:
+        row = await self.get(user_id, ref)
+        return self._path(row.storage_key).read_bytes()
+
+    async def delete(self, user_id: UUID, ref: str) -> None:
+        row = await self.get(user_id, ref)
+        self._path(row.storage_key).unlink(missing_ok=True)
+        await self._session.delete(row)
+        await self._session.flush()
+
+    async def text(self, user_id: UUID, ref: str) -> str:
+        row = await self.get(user_id, ref)
+        content = extract_text(self._path(row.storage_key).read_bytes(), row.name)
         if content is None:
             raise UnreadableFileError(
-                f"{record.name} is not a format this server can read as text "
+                f"{row.name} is not a format this server can read as text "
                 "(plain text and .docx are supported)"
             )
         return content
 
-    def read_text(self, ref: str, max_chars: int, offset: int = 0) -> str:
+    async def read_text(
+        self, user_id: UUID, ref: str, max_chars: int, offset: int = 0
+    ) -> str:
         """A window of the file's text.
 
         The window is explicit so a document longer than `max_chars` is paged
         through rather than silently cut off at the first screenful.
         """
-        content = self.text(ref)
+        content = await self.text(user_id, ref)
         total = len(content)
         start = max(0, min(offset, total))
         window = content[start : start + max_chars]
@@ -102,11 +146,10 @@ class FileRepository:
 
         if start == 0 and end == total:
             return window
-        return (
-            f"[characters {start}–{end} of {total}]\n\n{window}"
-            + (
-                f"\n\n[{total - end} characters remain — call again with offset={end}]"
-                if end < total
-                else ""
-            )
+
+        remaining = (
+            f"\n\n[{total - end} characters remain — call again with offset={end}]"
+            if end < total
+            else ""
         )
+        return f"[characters {start}–{end} of {total}]\n\n{window}{remaining}"

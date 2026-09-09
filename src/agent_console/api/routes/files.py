@@ -1,13 +1,19 @@
 """Upload endpoints. Uploaded files are reachable by the agent through tools."""
 
 from typing import Annotated
+from urllib.parse import quote
+from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
-from agent_console.api.dependencies import FileRepositoryDep
+from agent_console.api.dependencies import CurrentUserDep, FileRepositoryDep
 from agent_console.repositories.files import FileTooLargeError, UnknownFileError
-from agent_console.schemas.files import FileListResponse, FileUploadResponse
+from agent_console.schemas.files import (
+    FileListResponse,
+    FileResponse,
+    FileUploadResponse,
+)
 
 __all__ = ["router"]
 
@@ -16,41 +22,63 @@ router = APIRouter(prefix="/api/files", tags=["files"])
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_files(
+    user: CurrentUserDep,
     repository: FileRepositoryDep,
     files: Annotated[list[UploadFile], File()],
 ) -> FileUploadResponse:
     stored = []
     for upload in files:
         try:
-            record = repository.save(
+            record = await repository.save(
+                user.id,
                 name=upload.filename or "unnamed",
                 data=await upload.read(),
                 content_type=upload.content_type,
             )
         except FileTooLargeError as exc:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(exc)
             ) from exc
-        stored.append(record)
+        stored.append(FileResponse.model_validate(record))
     return FileUploadResponse(files=stored)
 
 
 @router.get("")
-async def list_files(repository: FileRepositoryDep) -> FileListResponse:
-    return FileListResponse(files=repository.list())
+async def list_files(
+    user: CurrentUserDep, repository: FileRepositoryDep
+) -> FileListResponse:
+    rows = await repository.list_for(user.id)
+    return FileListResponse(files=[FileResponse.model_validate(row) for row in rows])
+
+
+@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_file(
+    file_id: UUID, user: CurrentUserDep, repository: FileRepositoryDep
+) -> None:
+    try:
+        await repository.delete(user.id, str(file_id))
+    except UnknownFileError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
 
 @router.get("/{file_id}/download")
-async def download_file(file_id: str, repository: FileRepositoryDep) -> Response:
+async def download_file(
+    file_id: UUID, user: CurrentUserDep, repository: FileRepositoryDep
+) -> Response:
     """Serves both uploads and files the agent wrote via the write_file tool."""
     try:
-        record = repository.get(file_id)
-        data = repository.raw_bytes(file_id)
+        record = await repository.get(user.id, str(file_id))
+        data = await repository.raw_bytes(user.id, str(file_id))
     except UnknownFileError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
+    # RFC 5987 encoding, so Arabic and other non-ASCII names survive the header.
     return Response(
         content=data,
         media_type=record.content_type or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{record.name}"'},
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename*=UTF-8''{quote(record.name)}"
+            )
+        },
     )

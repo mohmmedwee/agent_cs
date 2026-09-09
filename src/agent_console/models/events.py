@@ -14,6 +14,7 @@ __all__ = [
     "ErrorEvent",
     "ReasoningDeltaEvent",
     "TextDeltaEvent",
+    "ToolCallDeltaEvent",
     "ToolCallEvent",
     "ToolResultEvent",
 ]
@@ -33,6 +34,21 @@ class ReasoningDeltaEvent(BaseModel):
 
     type: Literal["reasoning_delta"] = "reasoning_delta"
     text: str
+
+
+class ToolCallDeltaEvent(BaseModel):
+    """Progress while a tool call's arguments are still being generated.
+
+    Long calls (a multi-page `write_file`) can take minutes with no text
+    deltas. The name and argument length are enough for the UI to show what is
+    happening without flooding the stream with the document itself.
+    """
+
+    type: Literal["tool_call_delta"] = "tool_call_delta"
+    index: int
+    id: str = ""
+    name: str = ""
+    arguments_chars: int = 0
 
 
 class ToolCallEvent(BaseModel):
@@ -62,6 +78,7 @@ class DoneEvent(BaseModel):
 AgentEvent = Annotated[
     TextDeltaEvent
     | ReasoningDeltaEvent
+    | ToolCallDeltaEvent
     | ToolCallEvent
     | ToolResultEvent
     | ErrorEvent

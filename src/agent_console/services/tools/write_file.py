@@ -5,46 +5,80 @@ of the chat by hand. Written files land in the same store as uploads, so they
 appear in the file list and are downloadable.
 """
 
+from pathlib import Path
+
+from agent_console.repositories.documents import DOCX_MEDIA_TYPE, build_docx
 from agent_console.repositories.files import FileTooLargeError
 from agent_console.services.tools.context import ToolContext
 from agent_console.services.tools.registry import ToolRegistry
 
 __all__ = ["register"]
 
+# Extensions whose format we cannot actually produce. Writing text under one of
+# these names yields a file the user cannot open, so refuse and say so instead.
+_UNSUPPORTED = {".pdf", ".doc", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".rtf"}
+
+_TEXT_TYPES = {
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".html": "text/html",
+    ".xml": "application/xml",
+}
+
 
 def register(registry: ToolRegistry, context: ToolContext) -> None:
     files = context.files
+    user_id = context.user_id
 
     @registry.tool(
         name="write_file",
         description=(
             "Save text as a file the user can download. Use when the user asks "
             "for a document, report, summary, or code file as an artifact rather "
-            "than as chat text. Returns the download link."
+            "than as chat text. Write the content as Markdown: name the file "
+            ".docx and it becomes a real Word document, with your headings, "
+            "bold, lists, and code blocks carried across. Any other extension is "
+            "saved as plain text. PDF and the older Office formats cannot be "
+            "produced. Returns the download link."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "File name including extension, e.g. summary.md.",
+                    "description": "File name including extension, e.g. report.docx.",
                 },
                 "content": {
                     "type": "string",
-                    "description": "The full text to write.",
+                    "description": "The full text to write, as Markdown.",
                 },
             },
             "required": ["name", "content"],
         },
     )
-    def write_file(name: str, content: str) -> str:
+    async def write_file(name: str, content: str) -> str:
+        suffix = Path(name).suffix.lower()
+        if suffix in _UNSUPPORTED:
+            return (
+                f"Error: this server cannot build {suffix} files. Offer the user "
+                "a .docx or .md instead, then call this tool again."
+            )
+
+        if suffix == ".docx":
+            data, content_type = build_docx(content), DOCX_MEDIA_TYPE
+        else:
+            data = content.encode("utf-8")
+            content_type = _TEXT_TYPES.get(suffix, "text/plain")
+
         try:
-            record = files.save(
-                name=name, data=content.encode("utf-8"), content_type="text/plain"
+            row = await files.save(
+                user_id, name=name, data=data, content_type=content_type
             )
         except FileTooLargeError as exc:
             return f"Error: {exc}"
         return (
-            f"Wrote {record.name} ({record.size} bytes). "
-            f"Download: /api/files/{record.id}/download"
+            f"Wrote {row.name} ({row.size} bytes). "
+            f"Download: /api/files/{row.id}/download"
         )
