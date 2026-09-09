@@ -11,7 +11,7 @@ export function Logo({ className = 'h-8' }: { className?: string }) {
   return (
     <img
       src={arabic ? arabicLogo : latinLogo}
-      alt="Cleverso"
+      alt="cleverso-ai"
       className={className}
       draggable={false}
     />

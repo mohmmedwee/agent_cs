@@ -16,7 +16,7 @@ export function AdminPage() {
   const dateFormat = new Intl.DateTimeFormat(i18n.language, { dateStyle: 'medium' })
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="mx-auto h-full max-w-4xl overflow-y-auto px-6 py-8">
       <PageHeader title={t('admin.title')} subtitle={t('admin.subtitle')} />
 
       {isLoading ? (

@@ -53,6 +53,31 @@ Match the form to the type:
 - **Code** — runnable as written, with imports; comments only where the code
   cannot speak for itself.
 
+## Pick a visual theme
+
+`.docx` files support named themes via YAML front matter. Start every document
+with a block like:
+
+```
+---
+title: Cats — a short overview
+theme: cleverso
+---
+```
+
+Choose by intent — do not default everything to the same look:
+
+| Theme | Use when |
+|-------|----------|
+| `cleverso` | Branded / product / Cleverso-facing docs |
+| `classic` | Formal reports, essays, long-form reading |
+| `modern` | Specs, technical notes, clean handouts |
+| `warm` | Friendly guides, onboarding, soft topics |
+| `editorial` | Neutral default when nothing else fits |
+
+If the user names a look ("make it purple", "formal", "warm"), map it to the
+closest theme above.
+
 ## Choose a real filename
 
 Lowercase, hyphenated, with a correct extension: `caching-options.md`, not

@@ -110,6 +110,37 @@ class UpstreamClient:
         response.raise_for_status()
         return [entry["id"] for entry in response.json().get("data") or []]
 
+    async def complete_text(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int = 1_200,
+    ) -> str:
+        """One non-streaming completion; used for context summarization."""
+        body = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        response = await self._http.post(
+            f"{self._settings.upstream}/chat/completions",
+            json=body,
+            timeout=httpx.Timeout(120.0, connect=self._settings.connect_timeout),
+        )
+        if response.status_code >= 400:
+            raise UpstreamError(
+                f"upstream {response.status_code}: {response.text[:400]}"
+            )
+        message = response.json()["choices"][0]["message"]
+        text = (message.get("content") or "").strip()
+        if not text:
+            raise UpstreamError(f"{model} returned an empty summary")
+        return text
+
     async def stream_completion(
         self,
         model: str,
@@ -136,6 +167,7 @@ class UpstreamClient:
         # between getting an answer and spending it all on thinking.
         if effort:
             body["reasoning_effort"] = effort
+        body["max_tokens"] = self._settings.max_completion_tokens
         text_parts: list[str] = []
         accumulator = ToolCallAccumulator()
 

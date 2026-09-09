@@ -8,9 +8,14 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
 from agent_console.api.dependencies import CurrentUserDep, FileRepositoryDep
-from agent_console.repositories.files import FileTooLargeError, UnknownFileError
+from agent_console.repositories.files import (
+    FileTooLargeError,
+    UnknownFileError,
+    UnreadableFileError,
+)
 from agent_console.schemas.files import (
     FileListResponse,
+    FilePreviewResponse,
     FileResponse,
     FileUploadResponse,
 )
@@ -59,6 +64,32 @@ async def delete_file(
         await repository.delete(user.id, str(file_id))
     except UnknownFileError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.get("/{file_id}/preview")
+async def preview_file(
+    file_id: UUID, user: CurrentUserDep, repository: FileRepositoryDep
+) -> FilePreviewResponse:
+    """Readable text of a stored file, for in-chat document previews.
+
+    Caps the window so a long report does not flood the browser; the download
+    still carries the full document.
+    """
+    limit = 12_000
+    try:
+        record = await repository.get(user.id, str(file_id))
+        full = await repository.text(user.id, str(file_id))
+    except UnknownFileError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except UnreadableFileError as exc:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
+
+    return FilePreviewResponse(
+        id=record.id,
+        name=record.name,
+        text=full[:limit],
+        truncated=len(full) > limit,
+    )
 
 
 @router.get("/{file_id}/download")

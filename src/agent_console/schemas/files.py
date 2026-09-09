@@ -5,7 +5,12 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-__all__ = ["FileListResponse", "FileResponse", "FileUploadResponse"]
+__all__ = [
+    "FileListResponse",
+    "FilePreviewResponse",
+    "FileResponse",
+    "FileUploadResponse",
+]
 
 
 class FileResponse(BaseModel):
@@ -18,6 +23,13 @@ class FileResponse(BaseModel):
     uploaded_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class FilePreviewResponse(BaseModel):
+    id: UUID
+    name: str
+    text: str
+    truncated: bool = False
 
 
 class FileListResponse(BaseModel):

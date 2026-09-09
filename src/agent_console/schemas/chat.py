@@ -5,7 +5,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-__all__ = ["ChatRequest", "Effort", "ModelInfo", "ModelListResponse"]
+__all__ = [
+    "ChatRequest",
+    "Effort",
+    "ModelInfo",
+    "ModelListResponse",
+    "ToolApprovalRequest",
+]
 
 # Maps onto the upstream `reasoning_effort` parameter, which measurably shortens
 # this model's thinking: "minimal" cut it by about two thirds against baseline.
@@ -23,6 +29,14 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     model: str | None = None
     effort: Effort | None = None
+
+
+class ToolApprovalRequest(BaseModel):
+    """Allow or deny a paused tool call while the chat stream is still open."""
+
+    conversation_id: UUID
+    call_id: str = Field(min_length=1)
+    allowed: bool
 
 
 class ModelInfo(BaseModel):

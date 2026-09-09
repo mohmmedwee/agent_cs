@@ -38,7 +38,7 @@ export function SettingsPage() {
   const models = data?.models ?? []
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto h-full max-w-2xl overflow-y-auto px-6 py-8">
       <PageHeader title={t('settings.title')} subtitle={t('settings.subtitle')} />
 
       <div className="space-y-4">

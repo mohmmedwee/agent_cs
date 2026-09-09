@@ -14,6 +14,84 @@ const escapeHtml = (s: string) =>
 
 export { escapeHtml }
 
+function splitCells(line: string): string[] {
+  return line
+    .replace(/^\s*\|/, '')
+    .replace(/\|\s*$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+}
+
+function isSeparatorRow(line: string): boolean {
+  const cells = splitCells(line)
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+}
+
+/** GFM pipe tables — what the model emits for "make a table". */
+function renderTable(lines: string[]): string {
+  const header = splitCells(lines[0])
+  const align = splitCells(lines[1]).map((cell) => {
+    if (cell.startsWith(':') && cell.endsWith(':')) return 'center'
+    if (cell.endsWith(':')) return 'right'
+    if (cell.startsWith(':')) return 'left'
+    return ''
+  })
+  const body = lines.slice(2).map(splitCells)
+
+  const th = header
+    .map((cell, index) => {
+      const style = align[index] ? ` style="text-align:${align[index]}"` : ''
+      return `<th dir="auto"${style}>${cell}</th>`
+    })
+    .join('')
+
+  const rows = body
+    .map((cells) => {
+      const tds = header
+        .map((_, index) => {
+          const style = align[index] ? ` style="text-align:${align[index]}"` : ''
+          return `<td dir="auto"${style}>${cells[index] ?? ''}</td>`
+        })
+        .join('')
+      return `<tr>${tds}</tr>`
+    })
+    .join('')
+
+  return `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`
+}
+
+/**
+ * If the block is a table (optionally preceded by a prose line), return HTML
+ * for the prose + table. Otherwise null.
+ */
+function tryRenderTableBlock(block: string): string | null {
+  const lines = block.split('\n')
+  let start = -1
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (lines[i].includes('|') && isSeparatorRow(lines[i + 1])) {
+      start = i
+      break
+    }
+  }
+  if (start < 0) return null
+
+  let end = start + 2
+  while (end < lines.length && lines[end].includes('|')) end += 1
+
+  const tableLines = lines.slice(start, end)
+  if (tableLines.length < 2) return null
+
+  const before = lines.slice(0, start).join('\n').trim()
+  const after = lines.slice(end).join('\n').trim()
+  const table = renderTable(tableLines)
+
+  const parts: string[] = []
+  if (before) parts.push(`<p dir="auto">${before.replace(/\n/g, '<br>')}</p>`)
+  parts.push(table)
+  if (after) parts.push(`<p dir="auto">${after.replace(/\n/g, '<br>')}</p>`)
+  return parts.join('')
+}
+
 export function renderMarkdown(src: string): string {
   const blocks: string[] = []
 
@@ -50,6 +128,12 @@ export function renderMarkdown(src: string): string {
 
     if (/^\u0000\d+\u0000$/.test(t)) {
       out.push(t)
+      continue
+    }
+
+    const asTable = tryRenderTableBlock(t)
+    if (asTable) {
+      out.push(asTable)
       continue
     }
 

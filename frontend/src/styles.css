@@ -165,6 +165,25 @@
   .card {
     @apply rounded-2xl border border-secondary-200 bg-surface shadow-sm;
   }
+
+  .chat-answer {
+    @apply rounded-2xl border border-primary-100 bg-primary-25/70 px-4 py-3 shadow-sm;
+  }
+}
+
+@keyframes chat-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-chat-in {
+  animation: chat-in 0.28s ease-out both;
 }
 
 /* Rendered markdown. Scoped so agent output cannot restyle the app. */
@@ -201,7 +220,20 @@
   @apply border-s-2 border-primary-200 ps-4 text-secondary;
 }
 .prose-agent table {
-  @apply w-full border-collapse text-sm;
+  @apply w-full min-w-[32rem] border-collapse text-sm;
+}
+.prose-agent .table-wrap {
+  @apply max-w-full overflow-x-auto rounded-xl border border-secondary-200;
+}
+.prose-agent .table-wrap table {
+  @apply min-w-[32rem] border-0;
+}
+.prose-agent .table-wrap th,
+.prose-agent .table-wrap td {
+  @apply border-secondary-200;
+}
+.prose-agent .table-wrap thead th {
+  @apply bg-primary-25 font-semibold text-dark;
 }
 .prose-agent th, .prose-agent td {
   @apply border border-secondary-200 px-3 py-2 text-start;

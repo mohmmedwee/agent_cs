@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
 
 import {
+  BrainIcon,
   ChatIcon,
   ChevronIcon,
   FileIcon,
@@ -47,6 +48,7 @@ export function Sidebar({ collapsed, onToggle }: Props) {
   const links = [
     { to: '/chat', label: t('nav.chat'), Icon: ChatIcon },
     { to: '/files', label: t('nav.files'), Icon: FileIcon },
+    { to: '/memory', label: t('nav.memory'), Icon: BrainIcon },
     { to: '/skills', label: t('nav.skills'), Icon: SparkIcon },
     { to: '/settings', label: t('nav.settings'), Icon: GearIcon },
     ...(user?.is_admin
@@ -56,7 +58,7 @@ export function Sidebar({ collapsed, onToggle }: Props) {
 
   return (
     <aside
-      className={`flex shrink-0 flex-col border-e border-secondary-200 bg-surface
+      className={`flex h-full min-h-0 shrink-0 flex-col border-e border-secondary-200 bg-surface
         transition-[width] duration-200 ${collapsed ? 'w-[72px]' : 'w-60'}`}
     >
       <div className="p-3">

@@ -12,6 +12,7 @@ from agent_console.schemas.conversations import (
     ConversationSummary,
     CreateConversationRequest,
     RenameConversationRequest,
+    RewindConversationRequest,
 )
 
 __all__ = ["router"]
@@ -49,7 +50,7 @@ async def get_conversation(
         row = await repository.get(user.id, conversation_id)
     except UnknownConversationError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    return ConversationDetail.model_validate(row)
+    return ConversationDetail.from_row(row)
 
 
 @router.patch("/{conversation_id}")
@@ -64,6 +65,21 @@ async def rename_conversation(
     except UnknownConversationError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     return ConversationSummary.model_validate(row)
+
+
+@router.post("/{conversation_id}/rewind")
+async def rewind_conversation(
+    conversation_id: UUID,
+    payload: RewindConversationRequest,
+    user: CurrentUserDep,
+    repository: ConversationRepositoryDep,
+) -> ConversationDetail:
+    """Delete from message index `keep` onward — used when editing a prompt."""
+    try:
+        row = await repository.truncate_from(user.id, conversation_id, payload.keep)
+    except UnknownConversationError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return ConversationDetail.from_row(row)
 
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)

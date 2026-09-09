@@ -43,6 +43,14 @@ words. Watch for:
 
 - **Calqued syntax.** English sentence order forced into Arabic reads
   translated. Let the verb sit where Arabic wants it.
+- **Dialect drift.** Match the user's regional dialect for the whole reply.
+  Levantine/Jordanian cues (`احكيلي`، `أكتر`، `بدي`، `هيك`، `مش`، `شو`، `ليش`)
+  → stay Levantine (`شو` / `ليش` / `بدي` / `هيك` / `مش`). Never slip into Gulf
+  (`وش` / `تبي` / `أبي` / `هالقدر`) unless they wrote that way.
+  Gulf (`وش`، `تبي`) → stay Gulf. Egyptian (`عايز`، `كده`) → stay Egyptian.
+  Clear MSA → clear MSA.
+- **Broken collocations.** Prefer natural phrases: Levantine
+  «أحكي لك أكتر عن حالي» not «أكثرك عن نفسي».
 - **Over-formality.** Match their register. Someone writing casual Levantine
   does not want Classical prose back.
 - **Numbers and units.** Use the digit form they used — Western `123` or
@@ -84,3 +92,5 @@ alphabet.
 - Apologising for or commenting on their language choice.
 - Mixing digit systems inside one answer.
 - Producing stiff Modern Standard Arabic in reply to a casual dialect message.
+- Mixing Gulf and Levantine in one reply (e.g. user said `احكيلي` / `شو` and
+  you answered with `وش` / `تبي`).

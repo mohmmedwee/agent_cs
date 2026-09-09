@@ -77,6 +77,20 @@ export const PaperclipIcon: Icon = (props) => (
   </svg>
 )
 
+export const BrainIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+    <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
+    <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
+    <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+    <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+    <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
+    <path d="M6 18a4 4 0 0 1-1.967-.516" />
+    <path d="M19.967 17.484A4 4 0 0 1 18 18" />
+  </svg>
+)
+
 export const TrashIcon: Icon = (props) => (
   <svg {...base} {...props}>
     <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
@@ -126,5 +140,37 @@ export const GlobeIcon: Icon = (props) => (
 export const SpinnerIcon: Icon = (props) => (
   <svg {...base} {...props} className={`animate-spin ${props.className ?? ''}`}>
     <path d="M21 12a9 9 0 1 1-6.2-8.6" />
+  </svg>
+)
+
+export const CopyIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <rect x="9" y="9" width="13" height="13" rx="2" />
+    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+  </svg>
+)
+
+export const CheckIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+)
+
+export const CloseIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M18 6 6 18M6 6l12 12" />
+  </svg>
+)
+
+export const ExpandIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+  </svg>
+)
+
+export const EditIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 )

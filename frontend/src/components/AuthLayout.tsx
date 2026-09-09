@@ -18,7 +18,12 @@ export function AuthLayout({ title, subtitle, children, footer }: Props) {
   return (
     <div className="min-h-dvh bg-gradient-to-b from-primary-50 via-primary-25 to-canvas">
       <div className="flex items-center justify-between px-6 py-5">
-        <Logo className="h-7" />
+        <div className="inline-flex items-center gap-2.5">
+          <Logo className="h-7" />
+          <span className="text-sm font-semibold tracking-tight text-primary">
+            cleverso-ai
+          </span>
+        </div>
         <LanguageToggle />
       </div>
 

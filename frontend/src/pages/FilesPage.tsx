@@ -48,7 +48,7 @@ export function FilesPage() {
 
   return (
     <div
-      className="relative mx-auto max-w-4xl px-6 py-8"
+      className="relative mx-auto h-full max-w-4xl overflow-y-auto px-6 py-8"
       onDragOver={(event) => {
         event.preventDefault()
         setDragging(true)

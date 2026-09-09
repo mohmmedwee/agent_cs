@@ -91,6 +91,74 @@ class Settings(BaseSettings):
     )
     max_steps: int = Field(default=8, gt=0, description="Tool-call rounds before the loop gives up.")
 
+    context_window: int = Field(
+        default=32_768,
+        gt=0,
+        description=(
+            "Approximate model context window in tokens. Used for the chat "
+            "usage meter; set to match your loaded model in LM Studio."
+        ),
+    )
+    context_summarize_ratio: float = Field(
+        default=0.70,
+        gt=0.1,
+        le=0.95,
+        description=(
+            "When estimated prompt tokens exceed this fraction of "
+            "context_window, older turns are folded into a rolling summary."
+        ),
+    )
+    context_keep_recent: int = Field(
+        default=6,
+        gt=0,
+        description=(
+            "How many newest transcript messages to keep verbatim when "
+            "summarizing (user+assistant pairs count as two)."
+        ),
+    )
+    context_summarize_after_messages: int = Field(
+        default=24,
+        gt=0,
+        description=(
+            "Fold older turns once the unsummarized transcript exceeds this "
+            "many messages, even if estimated tokens are still under the "
+            "ratio budget. Stops short chats with many tiny turns from "
+            "never compressing."
+        ),
+    )
+    max_completion_tokens: int = Field(
+        default=4_096,
+        gt=256,
+        description=(
+            "Hard cap on tokens generated in one model completion. Prevents "
+            "runaway loops (e.g. endless laughter characters) from filling "
+            "the context window."
+        ),
+    )
+    max_memory_items: int = Field(
+        default=50,
+        gt=0,
+        description="Max durable user-memory notes per account.",
+    )
+    max_memory_chars: int = Field(
+        default=400,
+        gt=0,
+        description="Max characters for one user-memory note.",
+    )
+
+    approval_required_tools: set[str] = Field(
+        default_factory=lambda: {"write_file"},
+        description=(
+            "Tool names that pause for human allow/deny before running. "
+            "write_file is the default: it publishes bytes the user can download."
+        ),
+    )
+    approval_timeout: float = Field(
+        default=600.0,
+        gt=0,
+        description="Seconds to wait for an approval before treating it as deny.",
+    )
+
     request_timeout: float = Field(
         default=1_800.0,
         gt=0,
@@ -168,7 +236,7 @@ class Settings(BaseSettings):
     )
 
     search_results: int = Field(
-        default=5, gt=0, le=10, description="Default result count for web_search."
+        default=8, gt=0, le=10, description="Default result count for web_search."
     )
     fetch_timeout: float = Field(default=30.0, gt=0, description="Per-page fetch timeout.")
     max_page_chars: int = Field(
@@ -186,12 +254,24 @@ class Settings(BaseSettings):
     # offline chatbot — and apologises instead of using the tools it has.
     system_prompt: str = (
         "You are a helpful assistant running with live tool access.\n\n"
+        "## Who you are\n"
+        "You were built by Mohammed Alostah from the Cleverso team. "
+        "When someone asks who made you, who built you, or who is behind "
+        "cleverso-ai, say that clearly and warmly — and that you are always "
+        "happy to help. Do not volunteer this on every reply; only when asked "
+        "or when it naturally fits an introduction.\n\n"
         "## What you can actually do\n"
         "You have working, real-time access to the internet through `web_search` "
         "and `fetch_url`. You can read and write files, and do exact arithmetic. "
         "You can also see images: call `view_image` with a specific question and "
         "you get back an answer about what the picture contains. These tools work "
         "right now.\n\n"
+        "You can remember durable facts about this user across chats with "
+        "`remember`, remove them with `forget`, and inspect them with "
+        "`list_memories`. When they say \"remember that…\" or share a stable "
+        "preference, store it. When they correct you, update memory. Notes "
+        "already stored appear under \"About this user\" in your system "
+        "context — use them; do not invent extras.\n\n"
         "Never say you cannot look at an image. You can — ask `view_image`. It "
         "returns words, not pixels, so ask for exactly what you need and ask "
         "again if you need more.\n\n"
@@ -209,9 +289,33 @@ class Settings(BaseSettings):
         "## How to answer\n"
         "Call a tool when it gives you a fact you cannot know on your own. Answer "
         "directly when you genuinely already know.\n\n"
+        "Sound like a friendly, capable colleague — warm and clear, not stiff or "
+        "corporate. Prefer short natural sentences over formal reports. When you "
+        "finish a task (for example writing a file), celebrate it briefly and offer "
+        "one helpful next step. Do not paste raw /api/files download URLs — the UI "
+        "already shows a download card under your message. Avoid cold openers "
+        "like \"Done.\" or \"One thing worth flagging:\" — say it the way you would "
+        "in chat.\n\n"
         "Reply in the same language the user wrote in, matching their dialect and "
         "register. Keep technical terms in the language they used them in rather "
-        "than translating them. Do not mix dialects within one reply."
+        "than translating them. Do not mix dialects within one reply.\n\n"
+        "## Arabic dialect (critical)\n"
+        "When the user writes Arabic dialect, mirror THEIR dialect for the whole "
+        "reply — do not drift into another region's Arabic.\n"
+        "- Levantine / Jordanian cues (احكيلي، أكتر، بدي، هيك، مش، شو، ليش، "
+        "كيفك): stay Levantine. Prefer شو / ليش / بدي / هيك / مش. Never slip "
+        "into Gulf وش / تبي / أبي / هالقدر / يبيلّك.\n"
+        "- Gulf cues (وش، تبي، أبي، حق، زين): stay Gulf.\n"
+        "- Egyptian cues (عامل إيه، عايز، كده): stay Egyptian.\n"
+        "- If they write clear Modern Standard Arabic, reply in clear MSA.\n"
+        "Write natural native phrasing, not English word order in Arabic letters. "
+        "Avoid broken calques like «أكثرك عن نفسي» — say «أحكي لك أكتر عن حالي» "
+        "(Levantine) or the matching phrase in their dialect. Use Arabic "
+        "punctuation (؟ ،). Keep replies warm and concise unless they ask for "
+        "depth.\n\n"
+        "Never spam the same character or short laugh forever (no walls of "
+        "هههههه or hahaha). A short natural laugh or smile is enough — then "
+        "continue the conversation."
     )
 
     @field_validator("upstream")

@@ -26,7 +26,7 @@ export function SkillsPage() {
   }, [skills, filter])
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="mx-auto h-full max-w-4xl overflow-y-auto px-6 py-8">
       <PageHeader title={t('skills.title')} subtitle={t('skills.subtitle')} />
 
       <div className="mb-5 flex flex-wrap items-center gap-3">

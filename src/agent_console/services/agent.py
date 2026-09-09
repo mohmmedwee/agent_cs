@@ -11,9 +11,12 @@ from typing import Any
 
 import httpx
 
+from uuid import UUID
+
 from agent_console.clients.upstream import UpstreamClient, UpstreamError
 from agent_console.config import Settings
 from agent_console.models.chat import build_tool_message
+from agent_console.repositories.memory import MemoryRepository
 from agent_console.repositories.skills import SkillRepository
 from agent_console.models.events import (
     AgentEvent,
@@ -21,10 +24,13 @@ from agent_console.models.events import (
     ErrorEvent,
     ReasoningDeltaEvent,
     TextDeltaEvent,
+    ToolApprovalEvent,
     ToolCallDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
 )
+from agent_console.services.approvals import ApprovalBroker
+from agent_console.services.runaway import is_runaway_repetition, trim_runaway_tail
 from agent_console.services.tools import ToolRegistry
 
 __all__ = ["AgentService"]
@@ -55,14 +61,20 @@ class AgentService:
         tools: ToolRegistry,
         settings: Settings,
         skills: SkillRepository,
+        approvals: ApprovalBroker,
+        memories: MemoryRepository,
+        user_id: UUID,
     ) -> None:
         self._upstream = upstream
         self._tools = tools
         self._settings = settings
         self._skills = skills
+        self._approvals = approvals
+        self._memories = memories
+        self._user_id = user_id
 
-    def _system_prompt(self) -> str:
-        """Base prompt, today's date, and the skill index.
+    async def _system_prompt(self) -> str:
+        """Base prompt, today's date, user memory, and the skill index.
 
         Only skill names and descriptions go in — the bodies are pulled by the
         `read_skill` tool if and when the model decides one applies.
@@ -75,6 +87,10 @@ class AgentService:
             f"Today's date is {today:%A, %d %B %Y}. Anything you remember as "
             "'current' may be years out of date; check rather than assume."
         )
+
+        about = await self._memories.prompt_block(self._user_id)
+        if about:
+            prompt = f"{prompt}\n\n{about}"
 
         index = self._skills.index()
         if not index:
@@ -93,6 +109,7 @@ class AgentService:
         messages: list[dict[str, Any]],
         model: str | None = None,
         effort: str | None = None,
+        conversation_id: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Drive the loop, emitting typed events the UI renders by type.
 
@@ -101,7 +118,7 @@ class AgentService:
         answer, so a long tool chain would defeat it.
         """
         conversation: list[dict[str, Any]] = [
-            {"role": "system", "content": self._system_prompt()},
+            {"role": "system", "content": await self._system_prompt()},
             *messages,
         ]
 
@@ -121,6 +138,8 @@ class AgentService:
                 break
 
             assistant_message: dict[str, Any] | None = None
+            streamed_text: list[str] = []
+            cut_runaway = False
             try:
                 chunks = self._upstream.stream_completion(
                     model=chosen,
@@ -131,6 +150,21 @@ class AgentService:
                 )
                 async for chunk in chunks:
                     if chunk.text is not None:
+                        streamed_text.append(chunk.text)
+                        joined = "".join(streamed_text)
+                        if is_runaway_repetition(joined):
+                            # Stop feeding the UI more spam; keep a short laugh.
+                            cut_runaway = True
+                            cleaned = trim_runaway_tail(joined)
+                            # Only the excess beyond what we already showed.
+                            already = len(joined) - len(chunk.text)
+                            if len(cleaned) > already:
+                                yield TextDeltaEvent(text=cleaned[already:])
+                            assistant_message = {
+                                "role": "assistant",
+                                "content": cleaned,
+                            }
+                            break
                         yield TextDeltaEvent(text=chunk.text)
                     elif chunk.reasoning is not None:
                         yield ReasoningDeltaEvent(text=chunk.reasoning)
@@ -138,12 +172,19 @@ class AgentService:
                         yield ToolCallDeltaEvent(**chunk.tool_progress)
                     else:
                         assistant_message = chunk.message
+                        if cut_runaway:
+                            break
             except (httpx.HTTPError, UpstreamError) as exc:
                 yield ErrorEvent(message=_describe_upstream_failure(exc))
                 return
 
             if assistant_message is None:
                 yield ErrorEvent(message="Upstream closed the stream without a reply.")
+                return
+
+            if cut_runaway:
+                conversation.append(assistant_message)
+                yield DoneEvent(steps=steps_used + 1)
                 return
 
             conversation.append(assistant_message)
@@ -167,6 +208,30 @@ class AgentService:
                 name, raw_arguments = function["name"], function["arguments"]
 
                 yield ToolCallEvent(id=call_id, name=name, arguments=raw_arguments)
+
+                if (
+                    conversation_id
+                    and name in self._settings.approval_required_tools
+                ):
+                    yield ToolApprovalEvent(
+                        id=call_id, name=name, arguments=raw_arguments
+                    )
+                    allowed = await self._approvals.wait(
+                        conversation_id,
+                        call_id,
+                        timeout=self._settings.approval_timeout,
+                    )
+                    if not allowed:
+                        result = (
+                            "Error: the user declined this action. "
+                            "Do not retry the same write unless they ask."
+                        )
+                        yield ToolResultEvent(id=call_id, name=name, result=result)
+                        conversation.append(
+                            build_tool_message(call_id, name, result)
+                        )
+                        continue
+
                 result = await self._tools.invoke(name, raw_arguments)
                 yield ToolResultEvent(id=call_id, name=name, result=result)
 
@@ -195,13 +260,18 @@ class AgentService:
         reported nothing but the error. One more call, without tools, turns
         that into the answer the work had earned.
         """
+        # Must be `user`, not `system`: Qwen (and many chat templates) reject
+        # a system message anywhere after the first turn with a 500.
         conversation.append(
             {
-                "role": "system",
+                "role": "user",
                 "content": (
                     "The tool budget for this turn is spent. Answer now using "
-                    "only what the tool results above already gave you. If a "
-                    "file was written, give its download link. If the task is "
+                    "only what the tool results above already gave you. Be warm "
+                    "and conversational — not a status report. If a file was "
+                    "written, say it is ready in one short sentence and offer "
+                    "one next step — do not paste raw /api/files download URLs "
+                    "(the UI already shows a download card). If the task is "
                     "unfinished, say briefly what is left and that raising "
                     "Effort in Settings allows more steps."
                 ),

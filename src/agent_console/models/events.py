@@ -14,6 +14,7 @@ __all__ = [
     "ErrorEvent",
     "ReasoningDeltaEvent",
     "TextDeltaEvent",
+    "ToolApprovalEvent",
     "ToolCallDeltaEvent",
     "ToolCallEvent",
     "ToolResultEvent",
@@ -58,6 +59,19 @@ class ToolCallEvent(BaseModel):
     arguments: str
 
 
+class ToolApprovalEvent(BaseModel):
+    """Human-in-the-loop gate: the loop is paused until allow/deny.
+
+    Emitted after `tool_call` and before `tool_result` for tools listed in
+    `approval_required_tools`.
+    """
+
+    type: Literal["tool_approval"] = "tool_approval"
+    id: str
+    name: str
+    arguments: str
+
+
 class ToolResultEvent(BaseModel):
     type: Literal["tool_result"] = "tool_result"
     id: str
@@ -80,6 +94,7 @@ AgentEvent = Annotated[
     | ReasoningDeltaEvent
     | ToolCallDeltaEvent
     | ToolCallEvent
+    | ToolApprovalEvent
     | ToolResultEvent
     | ErrorEvent
     | DoneEvent,

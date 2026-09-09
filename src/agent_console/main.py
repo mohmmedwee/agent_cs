@@ -9,7 +9,9 @@ import httpx
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
-from agent_console.api.routes import admin, auth, chat, conversations, files, health, skills
+from agent_console.api.routes import admin, auth, chat, conversations, files, health, memory, skills
+from agent_console.services.approvals import ApprovalBroker
+from agent_console.services.chat_jobs import ChatJobBroker
 from agent_console.clients.cache import ResponseCache
 from agent_console.clients.search import DuckDuckGoBackend
 from agent_console.clients.upstream import UpstreamClient
@@ -74,6 +76,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             directories=[_resolve(d) for d in settings.skill_dirs],
             allowlist=settings.skill_allowlist,
         )
+        app.state.approvals = ApprovalBroker()
+        app.state.chat_jobs = ChatJobBroker()
 
         count = len(app.state.skill_repository.list())
         logger.info("loaded %d skills; upstream %s", count, settings.upstream)
@@ -95,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(health.router)
     app.include_router(files.router)
+    app.include_router(memory.router)
     app.include_router(skills.router)
     app.include_router(admin.router)
 

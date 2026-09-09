@@ -7,13 +7,13 @@ deleting a user removes their data rather than orphaning it.
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from agent_console.db.base import Base, timestamp_column, utcnow
 
-__all__ = ["Conversation", "Message", "StoredFileRow", "User"]
+__all__ = ["Conversation", "Message", "StoredFileRow", "User", "UserMemory"]
 
 
 def _pk() -> Mapped[UUID]:
@@ -37,6 +37,9 @@ class User(Base):
     files: Mapped[list["StoredFileRow"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    memories: Mapped[list["UserMemory"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Conversation(Base):
@@ -47,6 +50,10 @@ class Conversation(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(200), default="New chat")
+    # Rolling summary of older turns so long chats fit the model window.
+    # `summarized_count` is how many leading transcript messages are covered.
+    context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summarized_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = timestamp_column()
     updated_at: Mapped[datetime] = timestamp_column(onupdate=utcnow)
 
@@ -109,3 +116,25 @@ class StoredFileRow(Base):
     uploaded_at: Mapped[datetime] = timestamp_column()
 
     user: Mapped[User] = relationship(back_populates="files")
+
+
+class UserMemory(Base):
+    """A durable fact or preference about the user, used across conversations."""
+
+    __tablename__ = "user_memories"
+
+    id: Mapped[UUID] = _pk()
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    content: Mapped[str] = mapped_column(Text)
+    # "agent" when remember tool wrote it; "user" when edited in the Memory UI.
+    source: Mapped[str] = mapped_column(String(16), default="agent")
+    created_at: Mapped[datetime] = timestamp_column()
+    updated_at: Mapped[datetime] = timestamp_column(onupdate=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="memories")
+
+    __table_args__ = (
+        Index("ix_user_memories_user_updated", "user_id", "updated_at"),
+    )

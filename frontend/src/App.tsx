@@ -10,6 +10,7 @@ import { ChatPage } from '@/pages/ChatPage'
 import { FilesPage } from '@/pages/FilesPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { RegisterPage } from '@/pages/RegisterPage'
+import { MemoryPage } from '@/pages/MemoryPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { SkillsPage } from '@/pages/SkillsPage'
 
@@ -77,6 +78,7 @@ export default function App() {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/chat/:id" element={<ChatPage />} />
         <Route path="/files" element={<FilesPage />} />
+        <Route path="/memory" element={<MemoryPage />} />
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route

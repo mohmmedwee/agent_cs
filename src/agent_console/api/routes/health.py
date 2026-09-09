@@ -15,5 +15,15 @@ async def health(upstream: UpstreamClientDep, settings: SettingsDep) -> HealthRe
     try:
         model = await upstream.resolve_model()
     except Exception as exc:
-        return HealthResponse(upstream=settings.upstream, ok=False, error=str(exc))
-    return HealthResponse(upstream=settings.upstream, ok=True, model=model)
+        return HealthResponse(
+            upstream=settings.upstream,
+            ok=False,
+            error=str(exc),
+            context_window=settings.context_window,
+        )
+    return HealthResponse(
+        upstream=settings.upstream,
+        ok=True,
+        model=model,
+        context_window=settings.context_window,
+    )

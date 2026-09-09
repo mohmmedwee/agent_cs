@@ -7,6 +7,7 @@ import type {
   Skill,
   StoredFile,
   User,
+  UserMemory,
 } from '@/types'
 
 /**
@@ -97,6 +98,11 @@ export const api = {
         method: 'PATCH',
         body: json({ title }),
       }),
+    rewind: (id: string, keep: number) =>
+      request<ConversationDetail>(`/api/conversations/${id}/rewind`, {
+        method: 'POST',
+        body: json({ keep }),
+      }),
     remove: (id: string) =>
       request<void>(`/api/conversations/${id}`, { method: 'DELETE' }),
   },
@@ -114,6 +120,27 @@ export const api = {
     },
     remove: (id: string) => request<void>(`/api/files/${id}`, { method: 'DELETE' }),
     downloadUrl: (id: string) => `/api/files/${id}/download`,
+    preview: (id: string) =>
+      request<{ id: string; name: string; text: string; truncated: boolean }>(
+        `/api/files/${id}/preview`,
+      ),
+  },
+
+  memory: {
+    list: () =>
+      request<{ memories: UserMemory[] }>('/api/memory').then((r) => r.memories),
+    create: (content: string) =>
+      request<UserMemory>('/api/memory', {
+        method: 'POST',
+        body: json({ content }),
+      }),
+    update: (id: string, content: string) =>
+      request<UserMemory>(`/api/memory/${id}`, {
+        method: 'PATCH',
+        body: json({ content }),
+      }),
+    remove: (id: string) =>
+      request<void>(`/api/memory/${id}`, { method: 'DELETE' }),
   },
 
   skills: {
@@ -122,6 +149,16 @@ export const api = {
 
   models: () =>
     request<{ models: ModelInfo[]; current: string | null }>('/api/models'),
+
+    chat: {
+      approve: (body: { conversation_id: string; call_id: string; allowed: boolean }) =>
+        request<void>('/api/chat/approve', { method: 'POST', body: json(body) }),
+      stop: (conversation_id: string) =>
+        request<void>('/api/chat/stop', {
+          method: 'POST',
+          body: json({ conversation_id }),
+        }),
+    },
 
   health: () => request<Health>('/api/health'),
   admin: {

@@ -10,6 +10,7 @@ export type AgentEvent =
       arguments_chars: number
     }
   | { type: 'tool_call'; id: string; name: string; arguments: string }
+  | { type: 'tool_approval'; id: string; name: string; arguments: string }
   | { type: 'tool_result'; id: string; name: string; result: string }
   | { type: 'error'; message: string }
   | { type: 'done'; steps: number }
@@ -35,6 +36,10 @@ export type Block =
       /** True while the model is still generating this call's arguments. */
       streaming?: boolean
       argumentsChars?: number
+      /** Human-in-the-loop: waiting for Allow / Deny. */
+      awaitingApproval?: boolean
+      /** Approval POST in flight. */
+      approvalPending?: boolean
     }
   | { kind: 'error'; message: string }
 
@@ -67,6 +72,12 @@ export interface StoredMessage {
 
 export interface ConversationDetail extends ConversationSummary {
   messages: StoredMessage[]
+  /** Older turns were summarized for the model; UI still shows the full chat. */
+  context_compressed?: boolean
+  /** Rolling summary the model sees instead of older turns. */
+  context_summary?: string | null
+  /** How many leading transcript messages are covered by the summary. */
+  summarized_count?: number
 }
 
 export interface StoredFile {
@@ -77,6 +88,14 @@ export interface StoredFile {
   uploaded_at: string
   is_text: boolean
   is_image: boolean
+}
+
+export interface UserMemory {
+  id: string
+  content: string
+  source: string
+  created_at: string
+  updated_at: string
 }
 
 export interface Skill {
@@ -97,4 +116,5 @@ export interface Health {
   model: string | null
   upstream: string
   error: string | null
+  context_window?: number | null
 }

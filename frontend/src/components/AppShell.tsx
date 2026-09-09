@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router-dom'
+import { Link, Outlet } from 'react-router-dom'
 
 import { LanguageToggle } from '@/components/LanguageToggle'
 import { Logo } from '@/components/Logo'
@@ -15,7 +15,12 @@ export function AppShell() {
         className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between
           border-b border-secondary-200 bg-glassy px-5 backdrop-blur-md"
       >
-        <Logo className="h-7" />
+        <Link to="/chat" className="inline-flex items-center gap-2.5 no-underline">
+          <Logo className="h-7" />
+          <span className="text-sm font-semibold tracking-tight text-primary">
+            cleverso-ai
+          </span>
+        </Link>
         <div className="flex items-center gap-1">
           <LanguageToggle />
           <ProfileMenu />
@@ -24,8 +29,9 @@ export function AppShell() {
 
       <div className="flex min-h-0 flex-1">
         <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-        {/* min-w-0 stops long code blocks in chat from stretching the layout. */}
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        {/* min-h-0 lets this pane shrink so ChatPage's inner scroller can work;
+            overflow-hidden keeps scroll ownership inside each page. */}
+        <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
           <Outlet />
         </main>
       </div>

@@ -10,3 +10,4 @@ class HealthResponse(BaseModel):
     ok: bool
     model: str | None = None
     error: str | None = None
+    context_window: int | None = None

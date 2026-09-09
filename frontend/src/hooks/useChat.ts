@@ -1,262 +1,200 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 
-import { streamChat } from '@/lib/sse'
+import { api } from '@/lib/api'
+import {
+  bindChatRunner,
+  enqueueChatMessage,
+  getChatRun,
+  patchChatRunBlocks,
+  removeQueuedMessage,
+  replaceChatRunTurns,
+  setChatNotifyCopy,
+  startChatRun,
+  stopChatRun,
+  subscribeChatRun,
+} from '@/lib/chatRunner'
 import { conversationKeys } from '@/hooks/useConversations'
-import type { Block, Effort, Turn } from '@/types'
-
-/** Skill loading is bookkeeping, not content — it gets a quiet chip. */
-const SKILL_TOOL = 'read_skill'
-
-function skillNameFrom(args: string): string {
-  try {
-    return String(JSON.parse(args).name ?? 'skill')
-  } catch {
-    return 'skill'
-  }
-}
+import type { Effort, Turn } from '@/types'
 
 interface Options {
   conversationId: string | undefined
   model?: string
   effort?: Effort
+  title?: string
 }
 
 /**
- * Drives one request and folds the event stream into blocks on the last
- * assistant turn.
- *
- * The transcript is kept in local state while streaming rather than refetched
- * per event; the server persists the same turn independently, so a reload
- * shows the identical result without the stream having to round-trip.
+ * Chat UI bound to a process-wide runner. Leaving the page does not abort —
+ * only Stop does. Finished runs fire a browser notification when you are away.
  */
-export function useChat({ conversationId, model, effort }: Options) {
-  const [turns, setTurns] = useState<Turn[]>([])
-  const [busy, setBusy] = useState(false)
-  const abort = useRef<AbortController | null>(null)
-  const thoughtStartedAt = useRef(0)
+export function useChat({ conversationId, model, effort, title }: Options) {
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
+  const [localTurns, setLocalTurns] = useState<Turn[]>([])
 
-  // Switching conversations must cancel the run in flight, or its deltas land
-  // in the newly opened transcript.
   useEffect(() => {
-    return () => {
-      abort.current?.abort()
-      abort.current = null
-    }
-  }, [conversationId])
+    bindChatRunner(queryClient)
+  }, [queryClient])
 
-  const patchBlocks = useCallback((fn: (blocks: Block[]) => Block[]) => {
-    setTurns((previous) => {
-      const last = previous[previous.length - 1]
-      if (!last || last.role !== 'assistant') return previous
-      return [...previous.slice(0, -1), { role: 'assistant', blocks: fn(last.blocks) }]
+  useEffect(() => {
+    setChatNotifyCopy({
+      title: t('chat.notifyDoneTitle'),
+      body: t('chat.notifyDoneBody'),
     })
-  }, [])
+  }, [t])
 
-  /** Append to the trailing block when it matches, else start a new one. */
-  const appendDelta = useCallback(
-    (kind: 'text' | 'reasoning', text: string) => {
-      patchBlocks((blocks) => {
-        const last = blocks[blocks.length - 1]
-        if (last?.kind === kind) {
-          return [...blocks.slice(0, -1), { ...last, text: last.text + text } as Block]
-        }
-        if (kind === 'reasoning') {
-          thoughtStartedAt.current = Date.now()
-          return [...blocks, { kind: 'reasoning', text, seconds: 0, open: true }]
-        }
-        return [...blocks, { kind: 'text', text }]
+  const runVersion = useSyncExternalStore(
+    (listener) => subscribeChatRun(conversationId, listener),
+    () => {
+      const snap = getChatRun(conversationId)
+      if (!snap) return 'idle'
+      return `${snap.busy}:${snap.queue.length}:${snap.turns.length}:${JSON.stringify(
+        snap.turns[snap.turns.length - 1],
+      )}`
+    },
+    () => 'idle',
+  )
+
+  const active = useMemo(() => getChatRun(conversationId), [conversationId, runVersion])
+
+  const turns = active?.turns ?? localTurns
+  const busy = active?.busy ?? false
+  const queue = active?.queue ?? []
+
+  const setTurns = useCallback(
+    (value: Turn[] | ((previous: Turn[]) => Turn[])) => {
+      setLocalTurns((previous) => {
+        const basing = active?.turns ?? previous
+        const next = typeof value === 'function' ? value(basing) : value
+        if (active) replaceChatRunTurns(active.conversationId, next)
+        return next
       })
     },
-    [patchBlocks],
+    [active],
   )
 
-  /** Close any open reasoning block and stamp how long it ran. */
-  const sealReasoning = useCallback(() => {
-    patchBlocks((blocks) =>
-      blocks.map((block) =>
-        block.kind === 'reasoning' && block.open
-          ? {
-              ...block,
-              open: false,
-              seconds: Math.max(
-                1,
-                Math.round((Date.now() - thoughtStartedAt.current) / 1000),
-              ),
-            }
-          : block,
-      ),
-    )
-  }, [patchBlocks])
+  // When opening a chat with no live run, mirror server turns into local state.
+  // Active runs keep their own snapshot so navigate-away / navigate-back is seamless.
+  useEffect(() => {
+    if (active) return
+    // localTurns are owned by ChatPage via setTurns(toTurns(...))
+  }, [conversationId, active])
 
-  const stop = useCallback(() => abort.current?.abort(), [])
+  const stop = useCallback(() => stopChatRun(conversationId), [conversationId])
+
+  const removeQueued = useCallback(
+    (index: number) => {
+      if (conversationId) removeQueuedMessage(conversationId, index)
+    },
+    [conversationId],
+  )
 
   const send = useCallback(
-    async (text: string) => {
+    (text: string) => {
       const trimmed = text.trim()
-      if (!trimmed || abort.current || !conversationId) return
+      if (!trimmed || !conversationId) return
 
-      setTurns((previous) => [
-        ...previous,
-        { role: 'user', text: trimmed },
-        { role: 'assistant', blocks: [] },
-      ])
-
-      const controller = new AbortController()
-      abort.current = controller
-      setBusy(true)
-
-      try {
-        const stream = streamChat(
-          { conversation_id: conversationId, message: trimmed, model, effort },
-          controller.signal,
-        )
-
-        for await (const event of stream) {
-          switch (event.type) {
-            case 'text_delta':
-              sealReasoning()
-              appendDelta('text', event.text)
-              break
-
-            case 'reasoning_delta':
-              appendDelta('reasoning', event.text)
-              break
-
-            case 'tool_call_delta':
-              sealReasoning()
-              patchBlocks((blocks) => {
-                // Stable id while the real call id is still arriving: the model
-                // streams the name and arguments long before the id is known.
-                const pendingId = event.id || `pending-${event.index}`
-                const existing = blocks.findIndex(
-                  (block) =>
-                    block.kind === 'tool' &&
-                    (block.id === pendingId ||
-                      block.id === `pending-${event.index}` ||
-                      (block.streaming && block.name === event.name && event.name)),
-                )
-                const next = {
-                  kind: 'tool' as const,
-                  id: pendingId,
-                  name: event.name || '…',
-                  args: '',
-                  streaming: true,
-                  argumentsChars: event.arguments_chars,
-                }
-                if (existing >= 0) {
-                  return [
-                    ...blocks.slice(0, existing),
-                    { ...blocks[existing], ...next },
-                    ...blocks.slice(existing + 1),
-                  ]
-                }
-                return [...blocks, next]
-              })
-              break
-
-            case 'tool_call':
-              sealReasoning()
-              patchBlocks((blocks) => {
-                if (event.name === SKILL_TOOL) {
-                  // Drop any streaming placeholder for this skill, then chip.
-                  const without = blocks.filter(
-                    (block) =>
-                      !(block.kind === 'tool' && block.streaming && block.name === SKILL_TOOL),
-                  )
-                  return [
-                    ...without,
-                    {
-                      kind: 'skill',
-                      name: skillNameFrom(event.arguments),
-                      loading: true,
-                    },
-                  ]
-                }
-                const existing = blocks.findIndex(
-                  (block) =>
-                    block.kind === 'tool' &&
-                    (block.id === event.id ||
-                      (block.streaming &&
-                        (block.name === event.name || block.name === '…'))),
-                )
-                const finished = {
-                  kind: 'tool' as const,
-                  id: event.id,
-                  name: event.name,
-                  args: event.arguments,
-                  streaming: false,
-                }
-                if (existing >= 0) {
-                  return [
-                    ...blocks.slice(0, existing),
-                    finished,
-                    ...blocks.slice(existing + 1),
-                  ]
-                }
-                return [...blocks, finished]
-              })
-              break
-
-            case 'tool_result':
-              patchBlocks((blocks) =>
-                blocks.map((block) => {
-                  // The skill body is what we are deliberately not showing.
-                  if (block.kind === 'skill' && block.loading) {
-                    return { ...block, loading: false }
-                  }
-                  if (block.kind === 'tool' && block.id === event.id) {
-                    return {
-                      ...block,
-                      result: event.result,
-                      failed: event.result.startsWith('Error:'),
-                    }
-                  }
-                  return block
-                }),
-              )
-              break
-
-            case 'error':
-              sealReasoning()
-              patchBlocks((blocks) => [
-                ...blocks,
-                { kind: 'error', message: event.message },
-              ])
-              break
-
-            case 'done':
-              break
-          }
-        }
-      } catch (error) {
-        const problem = error as Error
-        if (problem.name !== 'AbortError') {
-          patchBlocks((blocks) => [
-            ...blocks,
-            { kind: 'error', message: problem.message },
-          ])
-        }
-      } finally {
-        sealReasoning()
-        abort.current = null
-        setBusy(false)
-        // The first turn gives the conversation its title, and its updated_at
-        // reorders the sidebar.
-        void queryClient.invalidateQueries({ queryKey: conversationKeys.all })
+      if (busy) {
+        enqueueChatMessage(conversationId, trimmed)
+        return
       }
+
+      startChatRun({
+        conversationId,
+        message: trimmed,
+        priorTurns: turns,
+        model,
+        effort,
+        title,
+      })
     },
-    [
-      conversationId,
-      model,
-      effort,
-      appendDelta,
-      patchBlocks,
-      sealReasoning,
-      queryClient,
-    ],
+    [busy, conversationId, turns, model, effort, title],
   )
 
-  return { turns, setTurns, send, stop, busy }
+  const editAndResend = useCallback(
+    async (turnIndex: number, text: string) => {
+      const trimmed = text.trim()
+      if (!trimmed || !conversationId || busy) return
+
+      const turn = turns[turnIndex]
+      if (!turn || turn.role !== 'user') return
+
+      stopChatRun(conversationId)
+      await api.conversations.rewind(conversationId, turnIndex)
+      const prior = turns.slice(0, turnIndex)
+      setLocalTurns(prior)
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.detail(conversationId),
+      })
+      startChatRun({
+        conversationId,
+        message: trimmed,
+        priorTurns: prior,
+        model,
+        effort,
+        title,
+      })
+    },
+    [conversationId, turns, busy, model, effort, title, queryClient],
+  )
+
+  const resolveApproval = useCallback(
+    async (callId: string, allowed: boolean) => {
+      if (!conversationId) return
+      patchChatRunBlocks(conversationId, (blocks) =>
+        blocks.map((block) =>
+          block.kind === 'tool' && block.id === callId
+            ? { ...block, awaitingApproval: false, approvalPending: true }
+            : block,
+        ),
+      )
+      // Keep local mirror in sync when run already finished (shouldn't happen).
+      setLocalTurns((previous) => {
+        const last = previous[previous.length - 1]
+        if (!last || last.role !== 'assistant') return previous
+        return [
+          ...previous.slice(0, -1),
+          {
+            role: 'assistant',
+            blocks: last.blocks.map((block) =>
+              block.kind === 'tool' && block.id === callId
+                ? { ...block, awaitingApproval: false, approvalPending: true }
+                : block,
+            ),
+          },
+        ]
+      })
+      try {
+        await api.chat.approve({
+          conversation_id: conversationId,
+          call_id: callId,
+          allowed,
+        })
+      } catch (error) {
+        patchChatRunBlocks(conversationId, (blocks) =>
+          blocks.map((block) =>
+            block.kind === 'tool' && block.id === callId
+              ? { ...block, awaitingApproval: true, approvalPending: false }
+              : block,
+          ),
+        )
+        throw error
+      }
+    },
+    [conversationId],
+  )
+
+  return {
+    turns,
+    setTurns,
+    send,
+    stop,
+    busy,
+    queue,
+    removeQueued,
+    editAndResend,
+    resolveApproval,
+  }
 }

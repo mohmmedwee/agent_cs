@@ -86,6 +86,30 @@ class ConversationRepository:
         )
         return int(result.scalar_one()) + 1
 
+    async def truncate_from(
+        self, user_id: UUID, conversation_id: UUID, keep: int
+    ) -> Conversation:
+        """Drop messages from `keep` onward so the user can edit and regenerate.
+
+        `keep` is a count of leading messages to retain (0 = clear the thread).
+        """
+        conversation = await self.get(user_id, conversation_id)
+        if keep < 0:
+            keep = 0
+        await self._session.execute(
+            delete(Message).where(
+                Message.conversation_id == conversation.id,
+                Message.position >= keep,
+            )
+        )
+        # Rewind invalidates any summary that covered deleted or shifted turns.
+        conversation.context_summary = None
+        conversation.summarized_count = 0
+        conversation.updated_at = utcnow()
+        await self._session.flush()
+        # Reload so callers see the trimmed message list.
+        return await self.get(user_id, conversation_id)
+
     async def append(
         self,
         user_id: UUID,

@@ -31,6 +31,7 @@ import io
 import os
 import re
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from xml.sax.saxutils import escape
 
@@ -57,6 +58,102 @@ _CORE_REL = (
 # any generated table of contents come out empty.
 _HEADINGS = {1: 36, 2: 28, 3: 24, 4: 22, 5: 22, 6: 22}  # level -> half-points
 
+
+@dataclass(frozen=True)
+class _DocTheme:
+    """Visual skin for styles.xml — one look per document, not one forever."""
+
+    name: str
+    body_font: str
+    heading_font: str
+    mono_font: str
+    ink: str
+    muted: str
+    accent: str
+    link: str
+    code_fill: str
+    rule: str
+    body_size: int = 22  # half-points
+    title_size: int = 52
+    line: int = 276
+
+
+# Named themes the model picks via YAML front matter (`theme: cleverso`).
+_THEMES: dict[str, _DocTheme] = {
+    "editorial": _DocTheme(
+        name="editorial",
+        body_font="Calibri",
+        heading_font="Calibri",
+        mono_font="Consolas",
+        ink="1F2430",
+        muted="4B5162",
+        accent="1F2430",
+        link="0563C1",
+        code_fill="F3F4F6",
+        rule="C9CDD6",
+    ),
+    "cleverso": _DocTheme(
+        name="cleverso",
+        body_font="Calibri",
+        heading_font="Calibri",
+        mono_font="Consolas",
+        ink="181819",
+        muted="6B7280",
+        accent="673CDB",
+        link="5833BA",
+        code_fill="F8F5FF",
+        rule="DCC7FF",
+    ),
+    "classic": _DocTheme(
+        name="classic",
+        body_font="Georgia",
+        heading_font="Georgia",
+        mono_font="Courier New",
+        ink="2C1810",
+        muted="6B5344",
+        accent="8B4513",
+        link="1A5276",
+        code_fill="F5F0E8",
+        rule="D4C4B0",
+        body_size=24,
+        title_size=56,
+        line=300,
+    ),
+    "modern": _DocTheme(
+        name="modern",
+        body_font="Calibri",
+        heading_font="Calibri Light",
+        mono_font="Consolas",
+        ink="111827",
+        muted="6B7280",
+        accent="0F766E",
+        link="0D9488",
+        code_fill="F0FDFA",
+        rule="99F6E4",
+        title_size=48,
+    ),
+    "warm": _DocTheme(
+        name="warm",
+        body_font="Calibri",
+        heading_font="Calibri",
+        mono_font="Consolas",
+        ink="292524",
+        muted="78716C",
+        accent="C2410C",
+        link="B45309",
+        code_fill="FFF7ED",
+        rule="FED7AA",
+    ),
+}
+
+_DEFAULT_THEME = "editorial"
+
+
+def _resolve_theme(name: str | None) -> _DocTheme:
+    key = (name or _DEFAULT_THEME).strip().lower()
+    return _THEMES.get(key, _THEMES[_DEFAULT_THEME])
+
+
 # A4 minus one-inch margins, in twips; also the table and image width budget.
 _CONTENT_TWIPS = 9026
 _TWIP_EMU = 635
@@ -77,77 +174,95 @@ _ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 _DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 
 
-def _heading_style(level: int, size: int) -> str:
+def _heading_style(level: int, size: int, theme: _DocTheme) -> str:
     italic = "<w:i/><w:iCs/>" if level >= 5 else ""
+    color = theme.accent if level <= 2 else theme.ink
     return (
         f'<w:style w:type="paragraph" w:styleId="Heading{level}">'
         f'<w:name w:val="heading {level}"/><w:basedOn w:val="Normal"/>'
         '<w:next w:val="Normal"/><w:qFormat/>'
         f'<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="360" w:after="120"/>'
         f'<w:outlineLvl w:val="{level - 1}"/></w:pPr>'
-        f'<w:rPr><w:b/><w:bCs/>{italic}<w:color w:val="1F2430"/>'
+        f'<w:rPr><w:rFonts w:ascii="{theme.heading_font}" '
+        f'w:hAnsi="{theme.heading_font}" w:cs="{theme.heading_font}"/>'
+        f'<w:b/><w:bCs/>{italic}<w:color w:val="{color}"/>'
         f'<w:sz w:val="{size}"/><w:szCs w:val="{size}"/></w:rPr></w:style>'
     )
 
 
-_STYLES = (
-    _DECL + f'<w:styles xmlns:w="{_W}">'
-    "<w:docDefaults><w:rPrDefault><w:rPr>"
-    '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>'
-    '<w:sz w:val="22"/><w:szCs w:val="22"/>'
-    "</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>"
-    '<w:spacing w:after="160" w:line="276" w:lineRule="auto"/>'
-    "</w:pPr></w:pPrDefault></w:docDefaults>"
-    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
-    '<w:name w:val="Normal"/><w:qFormat/></w:style>'
-    '<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont">'
-    '<w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/>'
-    "<w:semiHidden/><w:unhideWhenUsed/></w:style>"
-    + "".join(_heading_style(level, size) for level, size in _HEADINGS.items())
-    + '<w:style w:type="paragraph" w:styleId="Title">'
-    '<w:name w:val="Title"/><w:basedOn w:val="Normal"/>'
-    '<w:next w:val="Normal"/><w:qFormat/>'
-    '<w:pPr><w:spacing w:after="240"/></w:pPr>'
-    '<w:rPr><w:b/><w:bCs/><w:sz w:val="52"/><w:szCs w:val="52"/>'
-    '<w:color w:val="1F2430"/></w:rPr></w:style>'
-    # The contents heading must not carry an outline level, or the table of
-    # contents lists itself as its own first entry.
-    '<w:style w:type="paragraph" w:styleId="TOCHeading">'
-    '<w:name w:val="TOC Heading"/><w:basedOn w:val="Normal"/>'
-    '<w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:qFormat/>'
-    '<w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/></w:pPr>'
-    '<w:rPr><w:b/><w:bCs/><w:sz w:val="36"/><w:szCs w:val="36"/>'
-    '<w:color w:val="1F2430"/></w:rPr></w:style>'
-    '<w:style w:type="paragraph" w:styleId="Code">'
-    '<w:name w:val="HTML Preformatted"/><w:basedOn w:val="Normal"/>'
-    '<w:pPr><w:shd w:val="clear" w:color="auto" w:fill="F3F4F6"/>'
-    '<w:spacing w:after="160" w:line="240" w:lineRule="auto"/>'
-    '<w:ind w:left="360"/></w:pPr><w:rPr>'
-    '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>'
-    '<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>'
-    '<w:style w:type="paragraph" w:styleId="Quote">'
-    '<w:name w:val="Quote"/><w:basedOn w:val="Normal"/>'
-    '<w:next w:val="Normal"/><w:qFormat/>'
-    '<w:pPr><w:pBdr><w:left w:val="single" w:sz="18" w:space="8" '
-    'w:color="C9CDD6"/></w:pBdr><w:spacing w:after="120"/>'
-    '<w:ind w:left="360"/></w:pPr>'
-    '<w:rPr><w:i/><w:iCs/><w:color w:val="4B5162"/></w:rPr></w:style>'
-    '<w:style w:type="paragraph" w:styleId="ListParagraph">'
-    '<w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/>'
-    '<w:uiPriority w:val="34"/><w:qFormat/>'
-    '<w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style>'
-    '<w:style w:type="paragraph" w:styleId="HorizontalRule">'
-    '<w:name w:val="Horizontal Rule"/><w:basedOn w:val="Normal"/>'
-    '<w:next w:val="Normal"/>'
-    '<w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" '
-    'w:color="C9CDD6"/></w:pBdr><w:spacing w:before="120" w:after="240"/>'
-    "</w:pPr></w:style>"
-    '<w:style w:type="character" w:styleId="Hyperlink">'
-    '<w:name w:val="Hyperlink"/><w:basedOn w:val="DefaultParagraphFont"/>'
-    '<w:uiPriority w:val="99"/><w:unhideWhenUsed/>'
-    '<w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>'
-    "</w:styles>"
-)
+def _styles_xml(theme: _DocTheme) -> str:
+    """Build styles.xml for one theme — every .docx used to share one skin."""
+    return (
+        _DECL + f'<w:styles xmlns:w="{_W}">'
+        "<w:docDefaults><w:rPrDefault><w:rPr>"
+        f'<w:rFonts w:ascii="{theme.body_font}" w:hAnsi="{theme.body_font}" '
+        f'w:cs="{theme.body_font}"/>'
+        f'<w:sz w:val="{theme.body_size}"/><w:szCs w:val="{theme.body_size}"/>'
+        f'<w:color w:val="{theme.ink}"/>'
+        "</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>"
+        f'<w:spacing w:after="160" w:line="{theme.line}" w:lineRule="auto"/>'
+        "</w:pPr></w:pPrDefault></w:docDefaults>"
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+        '<w:name w:val="Normal"/><w:qFormat/></w:style>'
+        '<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont">'
+        '<w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/>'
+        "<w:semiHidden/><w:unhideWhenUsed/></w:style>"
+        + "".join(
+            _heading_style(level, size, theme) for level, size in _HEADINGS.items()
+        )
+        + '<w:style w:type="paragraph" w:styleId="Title">'
+        '<w:name w:val="Title"/><w:basedOn w:val="Normal"/>'
+        '<w:next w:val="Normal"/><w:qFormat/>'
+        '<w:pPr><w:spacing w:after="240"/></w:pPr>'
+        f'<w:rPr><w:rFonts w:ascii="{theme.heading_font}" '
+        f'w:hAnsi="{theme.heading_font}" w:cs="{theme.heading_font}"/>'
+        f'<w:b/><w:bCs/><w:sz w:val="{theme.title_size}"/>'
+        f'<w:szCs w:val="{theme.title_size}"/>'
+        f'<w:color w:val="{theme.accent}"/></w:rPr></w:style>'
+        # The contents heading must not carry an outline level, or the table of
+        # contents lists itself as its own first entry.
+        '<w:style w:type="paragraph" w:styleId="TOCHeading">'
+        '<w:name w:val="TOC Heading"/><w:basedOn w:val="Normal"/>'
+        '<w:next w:val="Normal"/><w:uiPriority w:val="39"/><w:qFormat/>'
+        '<w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/></w:pPr>'
+        f'<w:rPr><w:b/><w:bCs/><w:sz w:val="36"/><w:szCs w:val="36"/>'
+        f'<w:color w:val="{theme.ink}"/></w:rPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Code">'
+        '<w:name w:val="HTML Preformatted"/><w:basedOn w:val="Normal"/>'
+        f'<w:pPr><w:shd w:val="clear" w:color="auto" w:fill="{theme.code_fill}"/>'
+        '<w:spacing w:after="160" w:line="240" w:lineRule="auto"/>'
+        '<w:ind w:left="360"/></w:pPr><w:rPr>'
+        f'<w:rFonts w:ascii="{theme.mono_font}" w:hAnsi="{theme.mono_font}" '
+        f'w:cs="{theme.mono_font}"/>'
+        '<w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="Quote">'
+        '<w:name w:val="Quote"/><w:basedOn w:val="Normal"/>'
+        '<w:next w:val="Normal"/><w:qFormat/>'
+        '<w:pPr><w:pBdr><w:left w:val="single" w:sz="18" w:space="8" '
+        f'w:color="{theme.accent}"/></w:pBdr><w:spacing w:after="120"/>'
+        '<w:ind w:left="360"/></w:pPr>'
+        f'<w:rPr><w:i/><w:iCs/><w:color w:val="{theme.muted}"/></w:rPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="ListParagraph">'
+        '<w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/>'
+        '<w:uiPriority w:val="34"/><w:qFormat/>'
+        '<w:pPr><w:spacing w:after="60"/><w:contextualSpacing/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="HorizontalRule">'
+        '<w:name w:val="Horizontal Rule"/><w:basedOn w:val="Normal"/>'
+        '<w:next w:val="Normal"/>'
+        '<w:pPr><w:pBdr><w:bottom w:val="single" w:sz="6" w:space="1" '
+        f'w:color="{theme.rule}"/></w:pBdr><w:spacing w:before="120" w:after="240"/>'
+        "</w:pPr></w:style>"
+        '<w:style w:type="character" w:styleId="Hyperlink">'
+        '<w:name w:val="Hyperlink"/><w:basedOn w:val="DefaultParagraphFont"/>'
+        '<w:uiPriority w:val="99"/><w:unhideWhenUsed/>'
+        f'<w:rPr><w:color w:val="{theme.link}"/><w:u w:val="single"/></w:rPr></w:style>'
+        "</w:styles>"
+    )
+
+
+# Kept so older call sites / tests that imported the constant still resolve;
+# new packages always go through `_styles_xml(theme)`.
+_STYLES = _styles_xml(_THEMES[_DEFAULT_THEME])
 
 _BULLET_GLYPHS = ("\u2022", "o", "\u25aa")
 _BULLET_FONTS = ("Symbol", "Courier New", "Wingdings")
@@ -970,12 +1085,13 @@ def build_docx(
     markdown, meta = _front_matter(markdown)
     title = title or meta.get("title", "")
     author = author or meta.get("author", "")
+    theme = _resolve_theme(meta.get("theme"))
 
     document_parts = _Document(base_dir, images)
     body = _Blocks(document_parts).run(markdown)
 
     heading = (
-        _paragraph(document_parts.inline(title, bold=True, size=52), style="Title", rtl=_is_rtl(title))
+        _paragraph(document_parts.inline(title, bold=True, size=theme.title_size), style="Title", rtl=_is_rtl(title))
         if title and meta.get("title")
         else ""
     )
@@ -1028,7 +1144,7 @@ def build_docx(
         archive.writestr("_rels/.rels", _ROOT_RELS)
         archive.writestr("docProps/core.xml", _core_properties(title, author))
         archive.writestr("word/_rels/document.xml.rels", document_rels)
-        archive.writestr("word/styles.xml", _STYLES)
+        archive.writestr("word/styles.xml", _styles_xml(theme))
         archive.writestr("word/numbering.xml", _numbering(document_parts.ordered_ids))
         archive.writestr("word/settings.xml", _settings(toc))
         if page_numbers:

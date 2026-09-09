@@ -22,19 +22,23 @@ from agent_console.config import Settings
 from agent_console.db.models import User
 from agent_console.repositories.conversations import ConversationRepository
 from agent_console.repositories.files import FileRepository
+from agent_console.repositories.memory import MemoryRepository
 from agent_console.repositories.skills import SkillRepository
 from agent_console.repositories.users import UserRepository
 from agent_console.services.agent import AgentService
+from agent_console.services.approvals import ApprovalBroker
 from agent_console.services.security import PasswordHasherService, SessionTokenService
 from agent_console.services.tools import ToolContext, ToolRegistry, build_registry
 
 __all__ = [
     "AdminDep",
     "AgentServiceDep",
+    "ApprovalBrokerDep",
     "ConversationRepositoryDep",
     "CurrentUserDep",
     "DbSessionDep",
     "FileRepositoryDep",
+    "MemoryRepositoryDep",
     "PasswordHasherDep",
     "SessionTokenDep",
     "SettingsDep",
@@ -163,11 +167,20 @@ def _file_repository(session: DbSessionDep, settings: SettingsDep) -> FileReposi
     return FileRepository(session, settings.upload_dir, settings.max_upload_bytes)
 
 
+def _memory_repository(session: DbSessionDep, settings: SettingsDep) -> MemoryRepository:
+    return MemoryRepository(
+        session,
+        max_items=settings.max_memory_items,
+        max_chars=settings.max_memory_chars,
+    )
+
+
 def _conversation_repository(session: DbSessionDep) -> ConversationRepository:
     return ConversationRepository(session)
 
 
 FileRepositoryDep = Annotated[FileRepository, Depends(_file_repository)]
+MemoryRepositoryDep = Annotated[MemoryRepository, Depends(_memory_repository)]
 ConversationRepositoryDep = Annotated[
     ConversationRepository, Depends(_conversation_repository)
 ]
@@ -177,6 +190,7 @@ def _tool_registry(
     request: Request,
     settings: SettingsDep,
     files: FileRepositoryDep,
+    memories: MemoryRepositoryDep,
     skills: SkillRepositoryDep,
     cache: CacheDep,
     user: CurrentUserDep,
@@ -188,6 +202,7 @@ def _tool_registry(
         ToolContext(
             settings=settings,
             files=files,
+            memories=memories,
             skills=skills,
             search=state.search_backend,
             pages=PageFetcher(
@@ -205,13 +220,31 @@ def _tool_registry(
 ToolRegistryDep = Annotated[ToolRegistry, Depends(_tool_registry)]
 
 
+def _approvals(request: Request) -> ApprovalBroker:
+    return request.app.state.approvals
+
+
+ApprovalBrokerDep = Annotated[ApprovalBroker, Depends(_approvals)]
+
+
 def _agent_service(
     upstream: UpstreamClientDep,
     tools: ToolRegistryDep,
     settings: SettingsDep,
     skills: SkillRepositoryDep,
+    approvals: ApprovalBrokerDep,
+    memories: MemoryRepositoryDep,
+    user: CurrentUserDep,
 ) -> AgentService:
-    return AgentService(upstream=upstream, tools=tools, settings=settings, skills=skills)
+    return AgentService(
+        upstream=upstream,
+        tools=tools,
+        settings=settings,
+        skills=skills,
+        approvals=approvals,
+        memories=memories,
+        user_id=user.id,
+    )
 
 
 AgentServiceDep = Annotated[AgentService, Depends(_agent_service)]
