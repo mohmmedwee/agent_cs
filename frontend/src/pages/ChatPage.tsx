@@ -18,6 +18,7 @@ import { useChat } from '@/hooks/useChat'
 import { useConversation, useCreateConversation } from '@/hooks/useConversations'
 import { useLocalSetting } from '@/hooks/useLocalSetting'
 import { api } from '@/lib/api'
+import { skillDisplayName, toolDisplayName } from '@/lib/activityLabels'
 import type { Block, Effort, StoredFile, StoredMessage, Turn } from '@/types'
 
 /**
@@ -93,15 +94,16 @@ function activityLabel(
     return block.open ? t('chat.thinking') : t('chat.activityThought')
   }
   if (block.kind === 'skill') {
+    const label = skillDisplayName(block.name, t)
     return block.loading
-      ? t('chat.loadingSkill')
-      : `${t('chat.usedSkill')}: ${block.name}`
+      ? `${t('chat.loadingSkill')}: ${label}`
+      : `${t('chat.usedSkill')}: ${label}`
   }
   if (block.kind === 'tool') {
     if (block.name === 'web_search') return t('chat.searchedWeb')
     if (block.name === 'fetch_url') return t('chat.readPage')
     if (block.name === 'write_file') return t('chat.activityWroteFile')
-    return block.name
+    return toolDisplayName(block.name, t)
   }
   if (block.kind === 'error') return t('chat.activityError')
   return ''

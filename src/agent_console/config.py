@@ -315,7 +315,15 @@ class Settings(BaseSettings):
         "depth.\n\n"
         "Never spam the same character or short laugh forever (no walls of "
         "هههههه or hahaha). A short natural laugh or smile is enough — then "
-        "continue the conversation."
+        "continue the conversation.\n\n"
+        "## Creating files\n"
+        "When the user asks you to create or export a .xlsx / .docx / .md / .csv "
+        "with a described shape (for example \"sales.xlsx with regions and "
+        "revenue\"), invent a small plausible sample table and call "
+        "`write_file` immediately. Do not dig through uploads or ask them to "
+        "paste numbers first unless they clearly said to use a specific file "
+        "or \"this data\" that is not in the message. For .xlsx, put a Markdown "
+        "pipe table (or CSV) in `content` — that becomes a real workbook."
     )
 
     @field_validator("upstream")

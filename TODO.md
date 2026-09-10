@@ -9,11 +9,12 @@ Last agreed sequence: **PDF read + auto-title → XLSX export → run_python →
 
 - [x] **PDF reading** — `pypdf` in file read path; per-page text; cite page numbers in search
 - [x] **Auto-title** — refine chat title after first exchange via cheap upstream call
+- [x] **XLSX export** — `openpyxl` via `repositories/spreadsheets.py`; `write_file` builds real `.xlsx`
 
 ## Next
 
-- [ ] **XLSX export** — `openpyxl` writer beside existing `.docx` in `repositories/documents.py`
-- [ ] **PDF export** — after XLSX if still needed
+- [ ] **PDF export** — if still needed after XLSX
+
 - [ ] **`run_python` sandbox** — temp cwd, no network, wall-clock + memory cap; register output files
 - [ ] **Per-tool approval policy** — before python stays always-on (`always` / `ask` / `never`)
 - [ ] **Conversation branching** — rewind forks new row (`parent_id` + `branched_at_position`) + UI switcher
@@ -43,6 +44,7 @@ Last agreed sequence: **PDF read + auto-title → XLSX export → run_python →
 - [x] Chat calm: answer before thinking; collapse finished tools
 - [x] PDF reading for uploads + page cites in search
 - [x] Auto-title refine after first exchange
+- [x] XLSX export from Markdown tables / CSV via write_file
 
 ## Explicitly deferred
 

@@ -6,6 +6,7 @@ import { fileIdFromWriteResult, writeFilePayload } from '@/components/chat/Docum
 import { Markdown } from '@/components/chat/Markdown'
 import { FetchUrlResult } from '@/components/chat/FetchUrlResult'
 import { WebSearchResults } from '@/components/chat/WebSearchResults'
+import { skillDisplayName, toolDisplayName } from '@/lib/activityLabels'
 import type { Block } from '@/types'
 
 /** Successful write_file tools — shown after the answer, not mid-stream. */
@@ -57,9 +58,10 @@ function ReasoningBlock({ text, seconds, open }: Extract<Block, { kind: 'reasoni
   )
 }
 
-/** Skills are bookkeeping: a chip, never the skill body. */
+/** Guides are bookkeeping: a chip, never the skill body. */
 function SkillChip({ name, loading }: Extract<Block, { kind: 'skill' }>) {
   const { t } = useTranslation()
+  const label = skillDisplayName(name, t)
   return (
     <div
       className="inline-flex items-center gap-1.5 rounded-full bg-primary-25 px-3 py-1
@@ -67,7 +69,7 @@ function SkillChip({ name, loading }: Extract<Block, { kind: 'skill' }>) {
     >
       {loading ? <SpinnerIcon width={12} height={12} /> : <SparkIcon width={12} height={12} />}
       <span>
-        {loading ? t('chat.loadingSkill') : t('chat.usedSkill')}: {name}
+        {loading ? t('chat.loadingSkill') : t('chat.usedSkill')}: {label}
       </span>
     </div>
   )
@@ -242,9 +244,9 @@ function ToolBlock({
                 ${expanded ? 'rotate-90' : ''} rtl:-scale-x-100`}
             />
           )}
-          <code className={`font-mono font-medium ${failed ? 'text-error' : 'text-primary'}`}>
-            {name}
-          </code>
+          <span className={`font-medium ${failed ? 'text-error' : 'text-primary'}`}>
+            {toolDisplayName(name, t)}
+          </span>
           {summary && (
             <span className="truncate text-secondary" dir="auto">
               {summary}
