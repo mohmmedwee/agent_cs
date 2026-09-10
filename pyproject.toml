@@ -12,6 +12,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "pyyaml>=6.0",
     "ddgs>=9.0",
+    "pypdf>=5.0",
 ]
 
 [project.scripts]

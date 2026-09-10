@@ -5,6 +5,7 @@ step. Searching first lets the model locate the relevant passage and spend its
 context on that instead.
 """
 
+from agent_console.repositories.extraction import page_at_offset
 from agent_console.repositories.files import UnknownFileError, UnreadableFileError
 from agent_console.services.tools.context import ToolContext
 from agent_console.services.tools.registry import ToolRegistry
@@ -23,8 +24,9 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         name="search_uploaded_files",
         description=(
             "Search all uploaded files for a term and get back matching excerpts "
-            "with their character offsets. Use this before read_uploaded_file on "
-            "a long document: find where the answer is, then read that part."
+            "with character offsets (and PDF page numbers when available). Use "
+            "this before read_uploaded_file on a long document: find where the "
+            "answer is, then read that part."
         ),
         parameters={
             "type": "object",
@@ -64,7 +66,9 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                 start = max(0, position - _CONTEXT_CHARS)
                 end = min(len(content), position + len(needle) + _CONTEXT_CHARS)
                 excerpt = " ".join(content[start:end].split())
-                hits.append(f"  offset {position}: …{excerpt}…")
+                page = page_at_offset(content, position)
+                where = f"page {page}, offset {position}" if page else f"offset {position}"
+                hits.append(f"  {where}: …{excerpt}…")
                 position = haystack.find(needle, position + len(needle))
 
             if hits:

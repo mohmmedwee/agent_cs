@@ -30,6 +30,7 @@ from agent_console.schemas.chat import (
     ToolApprovalRequest,
 )
 from agent_console.services.approvals import ApprovalBroker
+from agent_console.services.auto_title import maybe_refine_title
 from agent_console.services.chat_jobs import ChatJobBroker
 from agent_console.services.context_compact import prepare_model_messages
 
@@ -131,6 +132,18 @@ async def chat(
             except Exception:
                 logger.exception(
                     "failed to persist assistant turn for %s", request.conversation_id
+                )
+            try:
+                await maybe_refine_title(
+                    factory=factory,
+                    upstream=upstream,
+                    user_id=user_id,
+                    conversation_id=request.conversation_id,
+                    model=request.model,
+                )
+            except Exception:
+                logger.exception(
+                    "auto-title failed for %s", request.conversation_id
                 )
             await event_queue.put(None)
 

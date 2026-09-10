@@ -126,8 +126,12 @@ class FileRepository:
         if content is None:
             raise UnreadableFileError(
                 f"{row.name} is not a format this server can read as text "
-                "(plain text and .docx are supported)"
+                "(plain text, .docx, and .pdf are supported)"
             )
+        # Older PDF rows may have been saved before extraction existed.
+        if not row.is_text:
+            row.is_text = True
+            await self._session.flush()
         return content
 
     async def read_text(

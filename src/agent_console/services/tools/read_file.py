@@ -15,10 +15,11 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
     @registry.tool(
         name="read_uploaded_file",
         description=(
-            "Read the text of a file the user uploaded (plain text or .docx). "
-            "Accepts the file name or its id. Long files come back in windows: "
-            "if the result says characters remain, call again with the offset "
-            "it gives you to read the rest."
+            "Read the text of a file the user uploaded (plain text, .docx, or "
+            ".pdf). PDFs include `--- Page N ---` markers. Accepts the file "
+            "name or its id. Long files come back in windows: if the result "
+            "says characters remain, call again with the offset it gives you "
+            "to read the rest."
         ),
         parameters={
             "type": "object",
