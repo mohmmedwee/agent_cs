@@ -167,7 +167,8 @@
   }
 
   .chat-answer {
-    @apply rounded-2xl border border-primary-100 bg-primary-25/70 px-4 py-3 shadow-sm;
+    @apply rounded-2xl border border-primary-100 bg-primary-25/80 px-5 py-4
+      text-[0.95rem] leading-relaxed shadow-sm;
   }
 }
 

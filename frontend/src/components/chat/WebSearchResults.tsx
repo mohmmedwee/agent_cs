@@ -67,10 +67,15 @@ export function WebSearchResults({
   failed: boolean
 }) {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(true)
+  // Finished searches stay collapsed so the answer stays the focus.
+  const [open, setOpen] = useState(false)
   const [canScrollMore, setCanScrollMore] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const hits = result && !failed ? parseSearchResultText(result) : []
+
+  useEffect(() => {
+    if (failed || pending) setOpen(true)
+  }, [failed, pending])
 
   const updateScrollHint = () => {
     const node = listRef.current
@@ -90,21 +95,27 @@ export function WebSearchResults({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-1.5 text-start text-sm text-secondary"
+        className="flex w-full items-center gap-1.5 text-start text-xs text-secondary"
         aria-expanded={open}
       >
         <span>
           {pending ? t('chat.searchingWeb') : t('chat.searchedWeb')}{' '}
-          <span className="font-semibold text-dark" dir="auto">
+          <span className="font-medium text-secondary-400" dir="auto">
             {query || '…'}
           </span>
+          {!pending && !failed && hits.length > 0 ? (
+            <span className="font-normal text-secondary">
+              {' '}
+              · {t('chat.searchHitCount', { count: hits.length })}
+            </span>
+          ) : null}
         </span>
         {pending ? (
-          <SpinnerIcon width={13} height={13} className="shrink-0" />
+          <SpinnerIcon width={12} height={12} className="shrink-0" />
         ) : (
           <ChevronIcon
-            width={14}
-            height={14}
+            width={13}
+            height={13}
             className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}
               rtl:-scale-x-100`}
           />

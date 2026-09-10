@@ -13,7 +13,7 @@ import {
   writeFilePayload,
 } from '@/components/chat/DocumentPreview'
 import { Logo } from '@/components/Logo'
-import { EditIcon, SparkIcon, SpinnerIcon } from '@/components/Icons'
+import { ChevronIcon, EditIcon, SparkIcon, SpinnerIcon } from '@/components/Icons'
 import { useChat } from '@/hooks/useChat'
 import { useConversation, useCreateConversation } from '@/hooks/useConversations'
 import { useLocalSetting } from '@/hooks/useLocalSetting'
@@ -70,8 +70,122 @@ function hasOwnProgress(blocks: Block[]) {
 }
 
 /**
- * Answer prose before the file card — tools finish mid-loop, so chronological
- * order puts Download above “here’s your document”.
+ * True when a progress block is still mid-flight (keep the trail expanded).
+ */
+function progressIsActive(block: Block): boolean {
+  if (block.kind === 'reasoning' && block.open) return true
+  if (block.kind === 'skill' && block.loading) return true
+  if (block.kind === 'tool') {
+    return (
+      block.streaming ||
+      block.awaitingApproval ||
+      block.result === undefined
+    )
+  }
+  return false
+}
+
+function activityLabel(
+  block: Block,
+  t: (key: string, options?: Record<string, string | number>) => string,
+): string {
+  if (block.kind === 'reasoning') {
+    return block.open ? t('chat.thinking') : t('chat.activityThought')
+  }
+  if (block.kind === 'skill') {
+    return block.loading
+      ? t('chat.loadingSkill')
+      : `${t('chat.usedSkill')}: ${block.name}`
+  }
+  if (block.kind === 'tool') {
+    if (block.name === 'web_search') return t('chat.searchedWeb')
+    if (block.name === 'fetch_url') return t('chat.readPage')
+    if (block.name === 'write_file') return t('chat.activityWroteFile')
+    return block.name
+  }
+  if (block.kind === 'error') return t('chat.activityError')
+  return ''
+}
+
+/**
+ * Finished tools collapse into one quiet row so the answer is the focus.
+ * While anything is still running, the full trail stays open.
+ */
+function TurnActivity({
+  blocks,
+  turnComplete,
+}: {
+  blocks: Block[]
+  turnComplete: boolean
+}) {
+  const { t } = useTranslation()
+  const busy = blocks.some(progressIsActive)
+  const [open, setOpen] = useState(true)
+
+  useEffect(() => {
+    if (busy) setOpen(true)
+    else if (turnComplete) setOpen(false)
+  }, [busy, turnComplete])
+
+  if (blocks.length === 0) return null
+
+  const labels = blocks
+    .map((block) => activityLabel(block, t))
+    .filter(Boolean)
+  const summary =
+    labels.length <= 3
+      ? labels.join(' · ')
+      : t('chat.activitySummaryCount', { count: labels.length })
+
+  if (!open && !busy) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex max-w-full items-center gap-1.5 rounded-full
+          border border-secondary-200 bg-secondary-25/80 px-2.5 py-1
+          text-[11px] font-medium text-secondary transition
+          hover:border-secondary-300 hover:text-dark"
+        aria-expanded={false}
+      >
+        <ChevronIcon
+          width={12}
+          height={12}
+          className="shrink-0 rtl:-scale-x-100"
+        />
+        <span className="truncate">{summary || t('chat.activityShow')}</span>
+      </button>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {turnComplete && !busy ? (
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="inline-flex items-center gap-1 text-[11px] font-medium
+            text-secondary transition hover:text-dark"
+          aria-expanded
+        >
+          <ChevronIcon
+            width={12}
+            height={12}
+            className="rotate-90 rtl:-scale-x-100"
+          />
+          {t('chat.activityHide')}
+        </button>
+      ) : null}
+      {blocks.map((block, blockIndex) => (
+        <BlockView key={`p-${blockIndex}`} block={block} />
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Answer first, then downloads, then thinking/tools underneath.
+ * Users want to read the reply before the scratch work.
  */
 function AssistantTurnBlocks({
   blocks,
@@ -97,27 +211,42 @@ function AssistantTurnBlocks({
 
   return (
     <>
-      {progress.map((block, blockIndex) => (
-        <BlockView key={`p-${blockIndex}`} block={block} />
-      ))}
-      {texts.map((block, blockIndex) => (
-        <BlockView key={`t-${blockIndex}`} block={block} />
-      ))}
-      {showFiles &&
-        files.map((block, blockIndex) => {
-          const fileId = fileIdFromWriteResult(block.result!)
-          if (!fileId) return null
-          const payload = writeFilePayload(block.args)
-          return (
-            <DocumentFileCard
-              key={`f-${block.id}-${blockIndex}`}
-              name={payload?.name || 'document'}
-              fileId={fileId}
-              content={payload?.content}
-              autoOpen={turnComplete || hasAnswer}
-            />
-          )
-        })}
+      {hasAnswer ? (
+        <div className="space-y-3">
+          {texts.map((block, blockIndex) => (
+            <BlockView key={`t-${blockIndex}`} block={block} />
+          ))}
+        </div>
+      ) : (
+        texts.map((block, blockIndex) => (
+          <BlockView key={`t-${blockIndex}`} block={block} />
+        ))
+      )}
+
+      {showFiles ? (
+        <div className={hasAnswer ? 'mt-3 space-y-2.5' : 'space-y-2.5'}>
+          {files.map((block, blockIndex) => {
+            const fileId = fileIdFromWriteResult(block.result!)
+            if (!fileId) return null
+            const payload = writeFilePayload(block.args)
+            return (
+              <DocumentFileCard
+                key={`f-${block.id}-${blockIndex}`}
+                name={payload?.name || 'document'}
+                fileId={fileId}
+                content={payload?.content}
+                autoOpen={turnComplete || hasAnswer}
+              />
+            )
+          })}
+        </div>
+      ) : null}
+
+      {progress.length > 0 ? (
+        <div className={hasAnswer || showFiles ? 'mt-3' : undefined}>
+          <TurnActivity blocks={progress} turnComplete={turnComplete} />
+        </div>
+      ) : null}
     </>
   )
 }
@@ -391,7 +520,7 @@ function ChatPageInner() {
                 ) : (
                   <div key={index} className="animate-chat-in flex gap-3">
                     <AgentAvatar />
-                    <div className="min-w-0 flex-1 space-y-2.5">
+                    <div className="min-w-0 flex-1 space-y-3">
                       <AssistantTurnBlocks
                         blocks={turn.blocks}
                         turnComplete={!busy || index !== turns.length - 1}
