@@ -16,7 +16,7 @@ import { SkillsPage } from '@/pages/SkillsPage'
 
 function FullPageSpinner() {
   return (
-    <div className="flex h-dvh items-center justify-center text-secondary">
+    <div className="flex h-dvh items-center justify-center text-ink-2">
       <SpinnerIcon width={28} height={28} />
     </div>
   )

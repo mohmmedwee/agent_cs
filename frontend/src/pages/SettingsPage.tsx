@@ -21,8 +21,8 @@ function Section({
 }) {
   return (
     <section className="card p-5">
-      <h2 className="font-semibold text-dark">{title}</h2>
-      {help && <p className="mt-1 text-sm text-secondary">{help}</p>}
+      <h2 className="font-semibold text-ink">{title}</h2>
+      {help && <p className="mt-1 text-sm text-ink-2">{help}</p>}
       <div className="mt-4">{children}</div>
     </section>
   )
@@ -31,7 +31,7 @@ function Section({
 export function SettingsPage() {
   const { t, i18n } = useTranslation()
   const [model, setModel] = useLocalSetting<string | null>('model', null)
-  const [storedEffort, setEffort] = useLocalSetting<string>('effort', 'medium')
+  const [storedEffort, setEffort] = useLocalSetting<string>('effort', 'xhigh')
   const effort = normalizeEffort(storedEffort)
   const { theme, setTheme } = useTheme()
 
@@ -45,7 +45,7 @@ export function SettingsPage() {
       <div className="space-y-4">
         <Section title={t('settings.model')} help={t('settings.modelHelp')}>
           {models.length === 0 ? (
-            <p className="text-sm text-secondary">{t('settings.modelUnavailable')}</p>
+            <p className="text-sm text-ink-2">{t('settings.modelUnavailable')}</p>
           ) : (
             <select
               value={model ?? data?.current ?? ''}
@@ -74,7 +74,7 @@ export function SettingsPage() {
                     transition ${
                       selected
                         ? 'border-primary-300 bg-primary-25'
-                        : 'border-secondary-200 hover:bg-secondary-25'
+                        : 'border-line hover:bg-paper-3'
                     }`}
                 >
                   <input
@@ -86,14 +86,14 @@ export function SettingsPage() {
                     className="mt-0.5 accent-[var(--color-primary)]"
                   />
                   <span>
-                    <span className="block text-sm font-medium text-dark">
+                    <span className="block text-sm font-medium text-ink">
                       {t(
                         level === 'xhigh'
                           ? 'settings.effortXhigh'
                           : `settings.effort${level.charAt(0).toUpperCase()}${level.slice(1)}`,
                       )}
                     </span>
-                    <span className="mt-0.5 block text-xs text-secondary">
+                    <span className="mt-0.5 block text-xs text-ink-2">
                       {t(
                         level === 'xhigh'
                           ? 'settings.effortXhighHelp'
@@ -111,7 +111,7 @@ export function SettingsPage() {
           <div className="space-y-4">
             <div>
               <p className="mb-2 text-sm font-medium">{t('settings.theme')}</p>
-              <div className="inline-flex rounded-xl border border-secondary-200 p-1">
+              <div className="inline-flex rounded-xl border border-line p-1">
                 {(['light', 'dark'] as const).map((option) => (
                   <button
                     key={option}
@@ -120,7 +120,7 @@ export function SettingsPage() {
                     className={`rounded-lg px-4 py-1.5 text-sm transition ${
                       theme === option
                         ? 'bg-primary text-white'
-                        : 'text-secondary hover:text-dark'
+                        : 'text-ink-2 hover:text-ink'
                     }`}
                   >
                     {t(`settings.theme${option === 'light' ? 'Light' : 'Dark'}`)}
@@ -131,7 +131,7 @@ export function SettingsPage() {
 
             <div>
               <p className="mb-2 text-sm font-medium">{t('settings.language')}</p>
-              <div className="inline-flex rounded-xl border border-secondary-200 p-1">
+              <div className="inline-flex rounded-xl border border-line p-1">
                 {LOCALES.map((locale: Locale) => (
                   <button
                     key={locale}
@@ -141,7 +141,7 @@ export function SettingsPage() {
                     className={`rounded-lg px-4 py-1.5 text-sm transition ${
                       i18n.language === locale
                         ? 'bg-primary text-white'
-                        : 'text-secondary hover:text-dark'
+                        : 'text-ink-2 hover:text-ink'
                     }`}
                   >
                     {locale === 'ar' ? 'العربية' : 'English'}

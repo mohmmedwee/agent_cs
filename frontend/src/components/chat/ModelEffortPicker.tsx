@@ -13,6 +13,8 @@ interface Props {
   effort: Effort
   onModelChange: (model: string | null) => void
   onEffortChange: (effort: Effort) => void
+  /** Quiet Workbench composer toolbar style. */
+  variant?: 'default' | 'composer'
 }
 
 function shortModelName(id: string): string {
@@ -38,6 +40,7 @@ export function ModelEffortPicker({
   effort,
   onModelChange,
   onEffortChange,
+  variant = 'default',
 }: Props) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -74,6 +77,15 @@ export function ModelEffortPicker({
     }
   }, [open])
 
+  const triggerClass =
+    variant === 'composer'
+      ? `inline-flex h-8 max-w-[16rem] items-center gap-1.5 rounded-lg px-2.5
+          text-xs text-ink-2 transition hover:bg-paper-3 hover:text-ink`
+      : `inline-flex max-w-[13rem] items-center gap-1.5 rounded-full
+          border border-line bg-surface px-2.5 py-1 text-[11px]
+          font-medium text-ink transition hover:border-line
+          hover:bg-paper-3`
+
   return (
     <div ref={root} className="relative z-50">
       <button
@@ -84,20 +96,19 @@ export function ModelEffortPicker({
         }}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="inline-flex max-w-[13rem] items-center gap-1.5 rounded-full
-          border border-primary-100 bg-surface px-2.5 py-1 text-[11px]
-          font-medium text-dark shadow-sm transition hover:border-primary-300
-          hover:bg-primary-25"
+        className={triggerClass}
       >
         <span className="truncate" dir="ltr">
           {activeModel ? shortModelName(activeModel) : t('chat.modelPicker')}
         </span>
-        <span className="text-secondary-400">·</span>
-        <span className="shrink-0 text-primary">{t(effortLabelKey(effort))}</span>
+        <span className="text-ink-3">·</span>
+        <span className="shrink-0">{t(effortLabelKey(effort))}</span>
         <ChevronIcon
-          width={11}
-          height={11}
-          className={`shrink-0 text-secondary transition-transform ${open ? 'rotate-90' : ''} rtl:-scale-x-100`}
+          width={12}
+          height={12}
+          className={`shrink-0 text-ink-3 transition-transform ${
+            open ? '-rotate-90' : 'rotate-90'
+          }`}
         />
       </button>
 
@@ -106,13 +117,13 @@ export function ModelEffortPicker({
           role="dialog"
           aria-label={t('chat.modelPicker')}
           className="absolute bottom-[calc(100%+0.5rem)] end-0 z-50 w-[min(18.5rem,calc(100vw-2rem))]
-            overflow-hidden rounded-2xl border border-secondary-200 bg-surface
+            overflow-hidden rounded-2xl border border-line bg-surface
             shadow-xl"
         >
           {panel === 'main' ? (
             <div className="py-1.5">
               {models.length === 0 ? (
-                <p className="px-3.5 py-3 text-xs text-secondary">
+                <p className="px-3.5 py-3 text-xs text-ink-2">
                   {t('settings.modelUnavailable')}
                 </p>
               ) : (
@@ -129,20 +140,20 @@ export function ModelEffortPicker({
                             setPanel('main')
                           }}
                           className={`flex w-full items-start gap-2 px-3.5 py-2.5 text-start
-                            transition hover:bg-primary-25 ${selected ? 'bg-primary-25/70' : ''}`}
+                            transition hover:bg-paper-3 ${selected ? 'bg-paper-3' : ''}`}
                         >
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-dark" dir="ltr">
+                            <span className="block truncate text-sm font-medium text-ink" dir="ltr">
                               {shortModelName(entry.id)}
                             </span>
-                            <span className="mt-0.5 block text-[11px] text-secondary">
+                            <span className="mt-0.5 block text-[11px] text-ink-2">
                               {entry.loaded
                                 ? t('chat.modelLoaded')
                                 : t('chat.modelAvailable')}
                             </span>
                           </span>
                           {selected ? (
-                            <CheckIcon width={16} height={16} className="mt-0.5 shrink-0 text-primary" />
+                            <CheckIcon width={16} height={16} className="mt-0.5 shrink-0 text-ink" />
                           ) : null}
                         </button>
                       </li>
@@ -151,28 +162,28 @@ export function ModelEffortPicker({
                 </ul>
               )}
 
-              <div className="my-1 border-t border-secondary-100" />
+              <div className="my-1 border-t border-line-soft" />
 
               <button
                 type="button"
                 onClick={() => setPanel('effort')}
                 className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5
-                  text-start transition hover:bg-primary-25"
+                  text-start transition hover:bg-paper-3"
               >
                 <span>
-                  <span className="block text-sm font-medium text-dark">
+                  <span className="block text-sm font-medium text-ink">
                     {t('settings.effort')}
                   </span>
-                  <span className="mt-0.5 block text-[11px] text-secondary">
+                  <span className="mt-0.5 block text-[11px] text-ink-2">
                     {t('chat.effortThinking')}
                   </span>
                 </span>
-                <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
+                <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ink-2">
                   {t(effortLabelKey(effort))}
                   <ChevronIcon
                     width={12}
                     height={12}
-                    className="text-secondary rtl:-scale-x-100"
+                    className="text-ink-2 rtl:-scale-x-100"
                   />
                 </span>
               </button>
@@ -183,7 +194,7 @@ export function ModelEffortPicker({
                 type="button"
                 onClick={() => setPanel('main')}
                 className="flex w-full items-center gap-2 px-3.5 py-2 text-xs font-medium
-                  text-secondary transition hover:bg-primary-25 hover:text-dark"
+                  text-ink-2 transition hover:bg-paper-3 hover:text-ink"
               >
                 <ChevronIcon
                   width={12}
@@ -205,13 +216,13 @@ export function ModelEffortPicker({
                           setPanel('main')
                         }}
                         className={`flex w-full items-start gap-2 px-3.5 py-2.5 text-start
-                          transition hover:bg-primary-25 ${selected ? 'bg-primary-25/70' : ''}`}
+                          transition hover:bg-paper-3 ${selected ? 'bg-paper-3' : ''}`}
                       >
                         <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-medium text-dark">
+                          <span className="block text-sm font-medium text-ink">
                             {t(effortLabelKey(level))}
                           </span>
-                          <span className="mt-0.5 block text-[11px] text-secondary">
+                          <span className="mt-0.5 block text-[11px] text-ink-2">
                             {t(effortHelpKey(level))}
                           </span>
                         </span>
@@ -219,7 +230,7 @@ export function ModelEffortPicker({
                           <CheckIcon
                             width={16}
                             height={16}
-                            className="mt-0.5 shrink-0 text-primary"
+                            className="mt-0.5 shrink-0 text-ink"
                           />
                         ) : null}
                       </button>

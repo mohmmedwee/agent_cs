@@ -155,10 +155,13 @@ class Settings(BaseSettings):
     )
 
     approval_required_tools: set[str] = Field(
-        default_factory=lambda: {"write_file", "run_python"},
+        default_factory=lambda: {
+            "write_file",
+            "convert_upload_to_docx",
+        },
         description=(
             "Tool names that pause for human allow/deny before running. "
-            "write_file publishes downloadable bytes; run_python executes code."
+            "write_file / convert_upload_to_docx publish downloadable bytes."
         ),
     )
     approval_timeout: float = Field(
@@ -241,6 +244,16 @@ class Settings(BaseSettings):
             "writing-shape",
             "writing-fragments",
             "writing-beats",
+            # Anthropic document / design skills (docx, pdf, pptx, xlsx, …).
+            "docx",
+            "pdf",
+            "pptx",
+            "xlsx",
+            "doc-coauthoring",
+            "theme-factory",
+            "brand-guidelines",
+            "internal-comms",
+            "canvas-design",
         },
         description=(
             "If non-empty, only these skill names are loaded. Use it to pull a few "
@@ -292,8 +305,8 @@ class Settings(BaseSettings):
         "cleaning or transforms, generating files from code, or computation that "
         "is awkward by hand, call `run_python` yourself — the user should not "
         "have to say \"use Python\". Simple one-line arithmetic can use "
-        "`calculate` instead. `run_python` pauses for their Allow/Deny; do not "
-        "ask in chat whether to run it. You can also see images: call "
+        "`calculate` instead. `run_python` runs automatically — do not ask "
+        "in chat whether to run it. You can also see images: call "
         "`view_image` with a specific question and you get back an answer about "
         "what the picture contains. These tools work right now.\n\n"
         "You can remember durable facts about this user across chats with "
@@ -353,7 +366,14 @@ class Settings(BaseSettings):
         "`write_file` immediately. Do not dig through uploads or ask them to "
         "paste numbers first unless they clearly said to use a specific file "
         "or \"this data\" that is not in the message. For .xlsx, put a Markdown "
-        "pipe table (or CSV) in `content` — that becomes a real workbook."
+        "pipe table (or CSV) in `content` — that becomes a real workbook.\n\n"
+        "When they already uploaded a Markdown/text file and want a Word "
+        "document from it (especially a long report), call "
+        "`convert_upload_to_docx` with the upload name and theme — do NOT "
+        "`read_uploaded_file` the whole body and then `write_file` it back. "
+        "That path crashes local models on large files. To update content, "
+        "pass small `replacements` (find/replace) or `sections` (one heading "
+        "at a time) on that same tool — never rewrite the entire upload."
     )
 
     @field_validator("upstream")

@@ -1,40 +1,53 @@
-import { Link, Outlet } from 'react-router-dom'
+import { useState } from 'react'
+import { Outlet, useLocation } from 'react-router-dom'
 
-import { LanguageToggle } from '@/components/LanguageToggle'
-import { Logo } from '@/components/Logo'
-import { ProfileMenu } from '@/components/ProfileMenu'
-import { Sidebar } from '@/components/Sidebar'
+import { ConversationList } from '@/components/ConversationList'
+import { NavRail } from '@/components/NavRail'
 import { useLocalSetting } from '@/hooks/useLocalSetting'
 
+export type AppShellOutlet = {
+  conversationsCollapsed: boolean
+  setConversationsCollapsed: (collapsed: boolean) => void
+  openMobileConversations: () => void
+}
+
+/**
+ * Quiet Workbench shell: dark rail + optional conversations panel + main.
+ */
 export function AppShell() {
+  const location = useLocation()
   const [collapsed, setCollapsed] = useLocalSetting('sidebar-collapsed', false)
+  const [mobileDrawer, setMobileDrawer] = useState(false)
+  const isChatRoute = location.pathname.startsWith('/chat')
 
   return (
-    <div className="flex h-dvh flex-col bg-canvas">
-      <header
-        className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between
-          border-b border-secondary-200 bg-glassy px-5 backdrop-blur-md"
-      >
-        <Link to="/chat" className="inline-flex items-center gap-2.5 no-underline">
-          <Logo className="h-7" />
-          <span className="text-sm font-semibold tracking-tight text-primary">
-            cleverso-ai
-          </span>
-        </Link>
-        <div className="flex items-center gap-1">
-          <LanguageToggle />
-          <ProfileMenu />
+    <div className="flex h-dvh bg-paper">
+      <NavRail />
+      {isChatRoute && !collapsed && (
+        <div className="hidden md:flex">
+          <ConversationList onCollapse={() => setCollapsed(true)} />
         </div>
-      </header>
-
-      <div className="flex min-h-0 flex-1">
-        <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-        {/* min-h-0 lets this pane shrink so ChatPage's inner scroller can work;
-            overflow-hidden keeps scroll ownership inside each page. */}
-        <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          <Outlet />
-        </main>
-      </div>
+      )}
+      {isChatRoute && (
+        <div className="md:hidden">
+          <ConversationList
+            onCollapse={() => setMobileDrawer(false)}
+            mobileOpen={mobileDrawer}
+            onMobileClose={() => setMobileDrawer(false)}
+          />
+        </div>
+      )}
+      <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-paper-2 pb-16 md:pb-0">
+        <Outlet
+          context={
+            {
+              conversationsCollapsed: collapsed,
+              setConversationsCollapsed: setCollapsed,
+              openMobileConversations: () => setMobileDrawer(true),
+            } satisfies AppShellOutlet
+          }
+        />
+      </main>
     </div>
   )
 }

@@ -269,13 +269,41 @@ function applyEvent(run: ActiveRun, event: AgentEvent): void {
       break
     case 'tool_approval':
       sealReasoning(run)
-      patchBlocks(run, (blocks) =>
-        blocks.map((block) =>
-          block.kind === 'tool' && block.id === event.id
-            ? { ...block, awaitingApproval: true }
-            : block,
-        ),
-      )
+      patchBlocks(run, (blocks) => {
+        const existing = blocks.findIndex(
+          (block) => block.kind === 'tool' && block.id === event.id,
+        )
+        if (existing >= 0) {
+          const block = blocks[existing]
+          if (block.kind !== 'tool') return blocks
+          return [
+            ...blocks.slice(0, existing),
+            {
+              ...block,
+              name: event.name || block.name,
+              args: event.arguments
+                ? clipUi(event.arguments, TOOL_ARGS_UI_CAP)
+                : block.args,
+              streaming: false,
+              awaitingApproval: true,
+              approvalPending: false,
+            },
+            ...blocks.slice(existing + 1),
+          ]
+        }
+        // tool_call may have been missed (partial replay) — still show Allow.
+        return [
+          ...blocks,
+          {
+            kind: 'tool' as const,
+            id: event.id,
+            name: event.name,
+            args: clipUi(event.arguments, TOOL_ARGS_UI_CAP),
+            streaming: false,
+            awaitingApproval: true,
+          },
+        ]
+      })
       break
     case 'tool_result':
       patchBlocks(run, (blocks) =>
@@ -285,7 +313,9 @@ function applyEvent(run: ActiveRun, event: AgentEvent): void {
           }
           if (block.kind === 'tool' && block.id === event.id) {
             if (
-              (event.name === 'write_file' || event.name === 'run_python') &&
+              (event.name === 'write_file' ||
+                event.name === 'run_python' ||
+                event.name === 'convert_upload_to_docx') &&
               !event.result.startsWith('Error:')
             ) {
               void queryClient?.invalidateQueries({ queryKey: ['files'] })
@@ -335,42 +365,102 @@ async function pump(run: ActiveRun, message: string, model?: string, effort?: Ef
     }
   } finally {
     aborted = aborted || run.controller.signal.aborted
-    sealReasoning(run)
-    run.busy = false
-    emit(run, true)
-
-    void queryClient?.invalidateQueries({ queryKey: conversationKeys.all })
-    void queryClient?.invalidateQueries({
-      queryKey: conversationKeys.detail(run.conversationId),
-    })
-
     if (!aborted) {
-      notifyChatDone({
-        conversationId: run.conversationId,
-        title: notifyCopy.title,
-        body: notifyCopy.body.replace('{{title}}', run.title),
-      })
+      // Original POST stream ended (proxy idle / refresh). Job may still be
+      // waiting on Allow — keep the runner alive via /chat/watch.
+      const kept = await watchUntilJobEnds(run)
+      if (kept) return
     }
-
-    const next = run.queue[0]
-    if (next && !aborted) {
-      run.queue = run.queue.slice(1)
-      run.turns = [
-        ...run.turns,
-        { role: 'user', text: next },
-        { role: 'assistant', blocks: [] },
-      ]
-      run.busy = true
-      run.controller = new AbortController()
-      emit(run, true)
-      await pump(run, next, model, effort)
-      return
-    }
-
-    runs.delete(run.conversationId)
-    emit(run, true)
-    waiters.delete(run.conversationId)
+    await finishRun(run, { aborted, model, effort })
   }
+}
+
+/**
+ * Reattach to the server job until it finishes or the user hits Stop.
+ * Returns true if this call owned teardown (caller must not finish again).
+ */
+async function watchUntilJobEnds(run: ActiveRun): Promise<boolean> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (run.controller.signal.aborted) return false
+    try {
+      const { active } = await api.chat.active(run.conversationId)
+      if (!active) return false
+    } catch {
+      return false
+    }
+
+    run.busy = true
+    run.controller = new AbortController()
+    emit(run, true)
+
+    let aborted = false
+    try {
+      for await (const event of watchChat(run.conversationId, run.controller.signal)) {
+        applyEvent(run, event)
+        emit(run)
+      }
+    } catch (error) {
+      const problem = error as Error
+      aborted = problem.name === 'AbortError' || run.controller.signal.aborted
+      if (!aborted && (error as ApiError).status !== 404) {
+        sealReasoning(run)
+        patchBlocks(run, (blocks) => [
+          ...blocks,
+          { kind: 'error', message: problem.message },
+        ])
+        emit(run, true)
+      }
+      if (aborted || (error as ApiError).status === 404) {
+        await finishRun(run, { aborted })
+        return true
+      }
+    }
+    // Stream ended without abort — loop and check active again.
+  }
+  await finishRun(run, { aborted: false })
+  return true
+}
+
+async function finishRun(
+  run: ActiveRun,
+  options: { aborted: boolean; model?: string; effort?: Effort },
+): Promise<void> {
+  const { aborted, model, effort } = options
+  sealReasoning(run)
+  run.busy = false
+  emit(run, true)
+
+  void queryClient?.invalidateQueries({ queryKey: conversationKeys.all })
+  void queryClient?.invalidateQueries({
+    queryKey: conversationKeys.detail(run.conversationId),
+  })
+
+  if (!aborted) {
+    notifyChatDone({
+      conversationId: run.conversationId,
+      title: notifyCopy.title,
+      body: notifyCopy.body.replace('{{title}}', run.title),
+    })
+  }
+
+  const next = run.queue[0]
+  if (next && !aborted) {
+    run.queue = run.queue.slice(1)
+    run.turns = [
+      ...run.turns,
+      { role: 'user', text: next },
+      { role: 'assistant', blocks: [] },
+    ]
+    run.busy = true
+    run.controller = new AbortController()
+    emit(run, true)
+    await pump(run, next, model, effort)
+    return
+  }
+
+  runs.delete(run.conversationId)
+  emit(run, true)
+  waiters.delete(run.conversationId)
 }
 
 export function startChatRun(options: {
@@ -479,23 +569,11 @@ export async function resumeChatRunIfActive(options: {
         emit(run, true)
       }
     } finally {
-      sealReasoning(run)
-      run.busy = false
-      emit(run, true)
-      void queryClient?.invalidateQueries({ queryKey: conversationKeys.all })
-      void queryClient?.invalidateQueries({
-        queryKey: conversationKeys.detail(run.conversationId),
-      })
       if (!aborted) {
-        notifyChatDone({
-          conversationId: run.conversationId,
-          title: notifyCopy.title,
-          body: notifyCopy.body.replace('{{title}}', run.title),
-        })
+        const kept = await watchUntilJobEnds(run)
+        if (kept) return
       }
-      runs.delete(run.conversationId)
-      emit(run, true)
-      waiters.delete(run.conversationId)
+      await finishRun(run, { aborted })
     }
   })()
 

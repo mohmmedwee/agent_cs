@@ -67,7 +67,7 @@ def _downgrade_effort(effort: str | None) -> str:
     for the actual tool call.
     """
     order = ("xhigh", "medium", "low", "minimal")
-    current = (effort or "medium").lower().replace("x-high", "xhigh")
+    current = (effort or "xhigh").lower().replace("x-high", "xhigh")
     if current == "high":
         current = "xhigh"
     if current not in order:
@@ -81,8 +81,9 @@ def _describe_upstream_failure(exc: BaseException) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return (
             "The model timed out mid-reply. Long documents can take more than "
-            "a few minutes to write into write_file — try a shorter page count, "
-            "or wait and send the request again."
+            "a few minutes to write into write_file — for an uploaded Markdown "
+            "file use convert_upload_to_docx instead, or try a shorter page "
+            "count / send the request again."
         )
     detail = str(exc).strip()
     lowered = detail.lower()

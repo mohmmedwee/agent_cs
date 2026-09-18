@@ -10,8 +10,13 @@ no way to ask you a follow-up. That single fact drives every choice here.
 
 ## Decide where it belongs
 
-Use `write_file` when the output is an **artifact** — something with a name
-and a life beyond this chat: a report, a spec, a README, a script, a memo.
+Use `convert_upload_to_docx` when the user **already uploaded** Markdown/text
+and wants a Word file from it (especially long reports). To change content,
+pass small `replacements` or per-heading `sections` on that tool — do not
+rewrite the upload through `write_file`.
+
+Use `write_file` when the output is a **new short artifact** you must compose
+from scratch — a report, a spec, a README, a script, a memo.
 
 Answer in chat when the output is a **reply** — an explanation, a
 recommendation, a short summary the user will read once and act on.
@@ -62,6 +67,8 @@ with a block like:
 ---
 title: Cats — a short overview
 theme: cleverso
+toc: true
+page_numbers: true
 ---
 ```
 
@@ -77,6 +84,10 @@ Choose by intent — do not default everything to the same look:
 
 If the user names a look ("make it purple", "formal", "warm"), map it to the
 closest theme above.
+
+For Word (`.docx`), also load the `docx` skill: it explains front matter, TOC,
+and that **tables get theme-colored headers automatically** — use Markdown pipe
+tables, never ASCII. Do not use pandoc or npm `docx` scripts; use `write_file`.
 
 ## Choose a real filename
 

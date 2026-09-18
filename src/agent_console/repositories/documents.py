@@ -181,7 +181,7 @@ def _heading_style(level: int, size: int, theme: _DocTheme) -> str:
         f'<w:style w:type="paragraph" w:styleId="Heading{level}">'
         f'<w:name w:val="heading {level}"/><w:basedOn w:val="Normal"/>'
         '<w:next w:val="Normal"/><w:qFormat/>'
-        f'<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="360" w:after="120"/>'
+        f'<w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before="400" w:after="160"/>'
         f'<w:outlineLvl w:val="{level - 1}"/></w:pPr>'
         f'<w:rPr><w:rFonts w:ascii="{theme.heading_font}" '
         f'w:hAnsi="{theme.heading_font}" w:cs="{theme.heading_font}"/>'
@@ -425,6 +425,7 @@ def _run(
     mark: bool = False,
     size: int = 0,
     style: str = "",
+    color: str = "",
 ) -> str:
     """One run. Child order follows the schema, or Word rejects the part.
 
@@ -445,6 +446,8 @@ def _run(
         parts.append("<w:i/><w:iCs/>")
     if strike:
         parts.append("<w:strike/>")
+    if color:
+        parts.append(f'<w:color w:val="{color}"/>')
     if size:
         parts.append(f'<w:sz w:val="{size}"/><w:szCs w:val="{size}"/>')
     if mark:
@@ -621,7 +624,9 @@ class _Document:
 
     # -- inline ------------------------------------------------------------
 
-    def inline(self, text: str, *, bold: bool = False, size: int = 0) -> str:
+    def inline(
+        self, text: str, *, bold: bool = False, size: int = 0, color: str = ""
+    ) -> str:
         """Markdown emphasis within one paragraph, as a sequence of Word runs.
 
         `bold` and `size` carry heading formatting onto every run. Headings
@@ -632,9 +637,11 @@ class _Document:
         position = 0
         for match in _INLINE.finditer(text):
             if match.start() > position:
-                runs.append(_run(text[position : match.start()], bold=bold, size=size))
+                runs.append(
+                    _run(text[position : match.start()], bold=bold, size=size, color=color)
+                )
             if (escaped := match.group("escape")) is not None:
-                runs.append(_run(escaped, bold=bold, size=size))
+                runs.append(_run(escaped, bold=bold, size=size, color=color))
             elif match.group("image_src") is not None:
                 runs.append(self.image(match.group("image_src"), match.group("image_alt")))
             elif (href := match.group("link_href")) is not None:
@@ -642,7 +649,7 @@ class _Document:
                 rel_id = self.hyperlink(href)
                 runs.append(
                     f'<w:hyperlink r:id="{rel_id}">'
-                    f"{self.inline(label, bold=bold, size=size) if _INLINE.search(label) else _run(label, bold=bold, size=size, style='Hyperlink')}"
+                    f"{self.inline(label, bold=bold, size=size, color=color) if _INLINE.search(label) else _run(label, bold=bold, size=size, color=color, style='Hyperlink')}"
                     "</w:hyperlink>"
                 )
             elif (url := match.group("autolink")) is not None:
@@ -652,22 +659,22 @@ class _Document:
                     f"{_run(url, size=size, style='Hyperlink')}</w:hyperlink>"
                 )
             elif (code := match.group("code")) is not None:
-                runs.append(_run(code, bold=bold, mono=True, size=size))
+                runs.append(_run(code, bold=bold, mono=True, size=size, color=color))
             elif (strong := match.group("strong_em")) is not None:
-                runs.append(_run(strong, bold=True, italic=True, size=size))
+                runs.append(_run(strong, bold=True, italic=True, size=size, color=color))
             elif (emphasis := match.group("bold") or match.group("bold_alt")) is not None:
-                runs.append(_run(emphasis, bold=True, size=size))
+                runs.append(_run(emphasis, bold=True, size=size, color=color))
             elif (struck := match.group("strike")) is not None:
-                runs.append(_run(struck, bold=bold, strike=True, size=size))
+                runs.append(_run(struck, bold=bold, strike=True, size=size, color=color))
             elif (marked := match.group("mark")) is not None:
-                runs.append(_run(marked, bold=bold, mark=True, size=size))
+                runs.append(_run(marked, bold=bold, mark=True, size=size, color=color))
             else:
                 italic = match.group("italic") or match.group("italic_alt") or ""
-                runs.append(_run(italic, bold=bold, italic=True, size=size))
+                runs.append(_run(italic, bold=bold, italic=True, size=size, color=color))
             position = match.end()
         if position < len(text):
-            runs.append(_run(text[position:], bold=bold, size=size))
-        return "".join(runs) or _run("", bold=bold, size=size)
+            runs.append(_run(text[position:], bold=bold, size=size, color=color))
+        return "".join(runs) or _run("", bold=bold, size=size, color=color)
 
 
 def _is_rtl(text: str) -> bool:
@@ -708,8 +715,9 @@ class _Blocks:
     lines is the current list nesting and the paragraph being accumulated.
     """
 
-    def __init__(self, document: _Document):
+    def __init__(self, document: _Document, theme: _DocTheme):
         self.doc = document
+        self.theme = theme
         self.out: list[str] = []
         self.pending: list[str] = []
         self.list_ids: dict[int, int] = {}
@@ -963,24 +971,34 @@ class _Blocks:
         alignments += [""] * (columns - len(alignments))
         width = _CONTENT_TWIPS // columns
         grid = "".join(f'<w:gridCol w:w="{width}"/>' for _ in range(columns))
+        theme = self.theme
 
-        def cell(text: str, position: int, head: bool) -> str:
+        def cell(text: str, position: int, head: bool, zebra: bool = False) -> str:
+            if head:
+                fill = theme.accent
+                ink = "FFFFFF"
+            elif zebra:
+                fill = theme.code_fill
+                ink = ""
+            else:
+                fill = ""
+                ink = ""
             shading = (
-                '<w:shd w:val="clear" w:color="auto" w:fill="EEF1F5"/>' if head else ""
+                f'<w:shd w:val="clear" w:color="auto" w:fill="{fill}"/>' if fill else ""
             )
             return (
                 f'<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/>{shading}'
                 '<w:vAlign w:val="center"/></w:tcPr>'
                 + _paragraph(
-                    self.doc.inline(text, bold=head),
+                    self.doc.inline(text, bold=head, color=ink),
                     align=alignments[position],
                     rtl=_is_rtl(text),
-                    spacing=60,
+                    spacing=80 if head else 60,
                 )
                 + "</w:tc>"
             )
 
-        def row(cells: list[str], head: bool) -> str:
+        def row(cells: list[str], head: bool, zebra: bool = False) -> str:
             cells = cells + [""] * (columns - len(cells))
             properties = (
                 "<w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>"
@@ -989,12 +1007,15 @@ class _Blocks:
             )
             return (
                 f"<w:tr>{properties}"
-                + "".join(cell(text, position, head) for position, text in enumerate(cells))
+                + "".join(
+                    cell(text, position, head, zebra)
+                    for position, text in enumerate(cells)
+                )
                 + "</w:tr>"
             )
 
         borders = "".join(
-            f'<w:{edge} w:val="single" w:sz="4" w:space="0" w:color="C9CDD6"/>'
+            f'<w:{edge} w:val="single" w:sz="4" w:space="0" w:color="{theme.rule}"/>'
             for edge in ("top", "left", "bottom", "right", "insideH", "insideV")
         )
         # A right-to-left table reads from the rightmost column, which is a
@@ -1008,13 +1029,16 @@ class _Blocks:
             f"<w:tbl><w:tblPr>{bidi}"
             f'<w:tblW w:w="{_CONTENT_TWIPS}" w:type="dxa"/>'
             f"<w:tblBorders>{borders}</w:tblBorders>"
-            '<w:tblCellMar><w:top w:w="60" w:type="dxa"/><w:left w:w="108" w:type="dxa"/>'
-            '<w:bottom w:w="60" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar>'
-            '<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" '
+            '<w:tblCellMar><w:top w:w="80" w:type="dxa"/><w:left w:w="120" w:type="dxa"/>'
+            '<w:bottom w:w="80" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tblCellMar>'
+            '<w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="0" '
             'w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>'
             f"</w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
             + row(header, True)
-            + "".join(row(cells, False) for cells in rows)
+            + "".join(
+                row(cells, False, zebra=(row_index % 2 == 1))
+                for row_index, cells in enumerate(rows)
+            )
             + "</w:tbl>"
             # A table may not be the last block in a body; Word wants a
             # paragraph after it to anchor the cursor.
@@ -1062,11 +1086,18 @@ def _toc(depth: int = 3) -> str:
 # --------------------------------------------------------------------------
 
 
+def _truthy(value: str | None) -> bool:
+    if not value:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
 def build_docx(
     markdown: str,
     *,
     title: str = "",
     author: str = "",
+    theme: str | None = None,
     toc: bool = False,
     page_numbers: bool = False,
     base_dir: str | None = None,
@@ -1081,14 +1112,22 @@ def build_docx(
     individual paragraphs are detected on their own either way. `images`
     supplies picture bytes by their Markdown source, for callers that have
     them in hand; anything not supplied is read relative to `base_dir`.
+
+    Explicit kwargs override YAML front matter for `theme`, `toc`,
+    `page_numbers` / `pages`, and `rtl` (used by convert-from-upload tools).
     """
     markdown, meta = _front_matter(markdown)
     title = title or meta.get("title", "")
     author = author or meta.get("author", "")
-    theme = _resolve_theme(meta.get("theme"))
+    theme = _resolve_theme(theme or meta.get("theme"))
+    toc = toc or _truthy(meta.get("toc"))
+    page_numbers = page_numbers or _truthy(
+        meta.get("page_numbers") or meta.get("pages")
+    )
+    rtl = rtl or _truthy(meta.get("rtl"))
 
     document_parts = _Document(base_dir, images)
-    body = _Blocks(document_parts).run(markdown)
+    body = _Blocks(document_parts, theme).run(markdown)
 
     heading = (
         _paragraph(document_parts.inline(title, bold=True, size=theme.title_size), style="Title", rtl=_is_rtl(title))

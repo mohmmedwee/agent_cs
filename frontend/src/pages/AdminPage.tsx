@@ -20,13 +20,13 @@ export function AdminPage() {
       <PageHeader title={t('admin.title')} subtitle={t('admin.subtitle')} />
 
       {isLoading ? (
-        <div className="flex justify-center py-16 text-secondary">
+        <div className="flex justify-center py-16 text-ink-2">
           <SpinnerIcon />
         </div>
       ) : (
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-secondary-25 text-xs uppercase tracking-wide text-secondary">
+            <thead className="bg-paper-3 text-xs uppercase tracking-wide text-ink-2">
               <tr>
                 <th className="px-4 py-3 text-start font-semibold">{t('admin.name')}</th>
                 <th className="px-4 py-3 text-start font-semibold">{t('admin.email')}</th>
@@ -36,9 +36,9 @@ export function AdminPage() {
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id} className="border-t border-secondary-200">
+                <tr key={user.id} className="border-t border-line">
                   <td className="px-4 py-3 font-medium">{user.display_name}</td>
-                  <td className="px-4 py-3 text-secondary" dir="ltr">
+                  <td className="px-4 py-3 text-ink-2" dir="ltr">
                     {user.email}
                   </td>
                   <td className="px-4 py-3">
@@ -46,13 +46,13 @@ export function AdminPage() {
                       className={`rounded-full px-2.5 py-1 text-xs font-medium ${
                         user.is_admin
                           ? 'bg-primary-50 text-primary'
-                          : 'bg-secondary-100 text-secondary'
+                          : 'bg-paper-3 text-ink-2'
                       }`}
                     >
                       {user.is_admin ? t('admin.roleAdmin') : t('admin.roleMember')}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-secondary">
+                  <td className="whitespace-nowrap px-4 py-3 text-ink-2">
                     {dateFormat.format(new Date(user.created_at))}
                   </td>
                 </tr>

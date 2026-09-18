@@ -23,6 +23,8 @@ export interface SessionBarProps {
   summarizedCount?: number
   /** e.g. model / effort picker */
   trailing?: ReactNode
+  /** Compact chips for the conversation header (no footer chrome). */
+  placement?: 'composer' | 'header'
 }
 
 function statusTone(status: SessionStatus): {
@@ -32,8 +34,8 @@ function statusTone(status: SessionStatus): {
   switch (status) {
     case 'working':
       return {
-        dot: 'bg-primary animate-pulse',
-        chip: 'bg-primary-50 text-primary',
+        dot: 'bg-ink-3 animate-pulse',
+        chip: 'bg-paper-3 text-ink-2',
       }
     case 'approval':
       return {
@@ -42,8 +44,8 @@ function statusTone(status: SessionStatus): {
       }
     case 'queued':
       return {
-        dot: 'bg-primary-300',
-        chip: 'bg-primary-25 text-primary-600',
+        dot: 'bg-ink-3',
+        chip: 'bg-paper-3 text-ink-2',
       }
     default:
       return {
@@ -56,7 +58,7 @@ function statusTone(status: SessionStatus): {
 function barClass(ratio: number): string {
   if (ratio >= 0.9) return 'bg-error'
   if (ratio >= 0.7) return 'bg-warning'
-  return 'bg-primary'
+  return 'bg-ink-3'
 }
 
 /** Compact footer strip — meant to sit inside the composer shell. */
@@ -70,6 +72,7 @@ export function ChatSessionBar({
   contextSummary = null,
   summarizedCount = 0,
   trailing,
+  placement = 'composer',
 }: SessionBarProps) {
   const { t } = useTranslation()
   const panelId = useId()
@@ -127,16 +130,15 @@ export function ChatSessionBar({
           role="dialog"
           aria-label={t('chat.contextSummaryTitle')}
           className="absolute bottom-full start-0 z-20 mb-2 w-[min(100%,22rem)]
-            rounded-2xl border border-primary-100 bg-white p-3 shadow-lg
-            shadow-primary-900/10"
+            rounded-2xl border border-line bg-surface p-3 shadow-md"
         >
           <div className="mb-2 flex items-start justify-between gap-2">
             <div>
-              <p className="text-xs font-semibold text-primary">
+              <p className="text-xs font-semibold text-ink">
                 {t('chat.contextSummaryTitle')}
               </p>
               {summarizedCount > 0 ? (
-                <p className="mt-0.5 text-[11px] text-secondary">
+                <p className="mt-0.5 text-[11px] text-ink-2">
                   {t('chat.contextSummaryMeta', { count: summarizedCount })}
                 </p>
               ) : null}
@@ -145,15 +147,15 @@ export function ChatSessionBar({
               type="button"
               onClick={() => setSummaryOpen(false)}
               className="rounded-lg px-1.5 py-0.5 text-[11px] font-medium
-                text-secondary hover:bg-primary-25 hover:text-primary"
+                text-ink-2 hover:bg-paper-3 hover:text-ink"
             >
               {t('chat.contextSummaryClose')}
             </button>
           </div>
           <pre
             className="max-h-48 overflow-auto whitespace-pre-wrap break-words
-              rounded-xl bg-primary-25/60 px-2.5 py-2 text-[11px] leading-relaxed
-              text-secondary-700"
+              rounded-xl bg-paper-3 px-2.5 py-2 text-[11px] leading-relaxed
+              text-ink-2"
             dir="auto"
           >
             {contextSummary}
@@ -162,20 +164,24 @@ export function ChatSessionBar({
       ) : null}
 
       <div
-        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5
-          rounded-b-3xl border-t border-primary-50/80 bg-primary-25/40 px-3 py-2"
+        className={
+          placement === 'header'
+            ? 'flex flex-wrap items-center justify-end gap-x-2 gap-y-1'
+            : `flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5
+                rounded-b-2xl border-t border-line bg-paper-3/50 px-3 py-2`
+        }
       >
         <div className="inline-flex min-w-0 flex-wrap items-center gap-2">
           {showStats ? (
             <>
               <span
                 className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5
-                  text-[11px] font-semibold tracking-wide ${tone.chip}`}
+                  text-[11px] font-medium tracking-wide ${tone.chip}`}
               >
                 <span className={`size-1.5 rounded-full ${tone.dot}`} aria-hidden />
                 {statusLabel}
               </span>
-              <span className="text-[11px] text-secondary">
+              <span className="text-[11px] text-ink-2">
                 {t('chat.messagesCount', { count: messages })}
               </span>
               {contextCompressed ? (
@@ -185,9 +191,9 @@ export function ChatSessionBar({
                   aria-expanded={summaryOpen}
                   aria-controls={canViewSummary ? panelId : undefined}
                   onClick={() => canViewSummary && setSummaryOpen((open) => !open)}
-                  className="rounded-full bg-secondary-100 px-2 py-0.5 text-[11px]
-                    font-medium text-secondary transition enabled:hover:bg-secondary-200
-                    enabled:hover:text-secondary-800 disabled:cursor-default"
+                  className="rounded-full bg-paper-3 px-2 py-0.5 text-[11px]
+                    font-medium text-ink-2 transition enabled:hover:bg-paper-3
+                    enabled:hover:text-ink disabled:cursor-default"
                   title={
                     canViewSummary
                       ? t('chat.contextSummaryOpenHint')
@@ -199,7 +205,7 @@ export function ChatSessionBar({
               ) : null}
             </>
           ) : (
-            <span className="text-[11px] text-secondary">{t('chat.composerHints')}</span>
+            <span className="text-[11px] text-ink-2">{t('chat.composerHints')}</span>
           )}
         </div>
 
@@ -211,14 +217,14 @@ export function ChatSessionBar({
               className="inline-flex items-center gap-2"
               title={t('chat.contextHint')}
             >
-              <span className="text-[11px] font-medium tabular-nums text-secondary">
+              <span className="text-[11px] font-medium tabular-nums text-ink-2">
                 {t('chat.contextShort', {
                   used: formatTokenCount(used),
                   total: formatTokenCount(contextWindow),
                 })}
               </span>
               <div
-                className="h-1 w-14 overflow-hidden rounded-full bg-secondary-100
+                className="h-1 w-14 overflow-hidden rounded-full bg-paper-3
                   sm:w-16"
                 role="meter"
                 aria-valuemin={0}
@@ -231,7 +237,7 @@ export function ChatSessionBar({
                   style={{ width: `${Math.max(4, percent)}%` }}
                 />
               </div>
-              <span className="w-7 text-end text-[11px] tabular-nums text-secondary">
+              <span className="w-7 text-end text-[11px] tabular-nums text-ink-2">
                 {percent}%
               </span>
             </div>

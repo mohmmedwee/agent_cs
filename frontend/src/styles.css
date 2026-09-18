@@ -1,14 +1,14 @@
 @import "tailwindcss";
 @import "./assets/fonts/noto-kufi-arabic/fonts.css";
+@import "./assets/fonts/ibm-plex-mono/fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Tokens copied from the Cleverso portal_fe design system so this console
-   sits alongside the other portals rather than looking like a separate
-   product. Do not hand-tune these values; change them upstream. */
+/* Brand tokens from Cleverso portal_fe — do not change their values.
+   Quiet Workbench paper/ink tokens sit alongside them. */
 @theme {
   --font-sans: "Noto Kufi Arabic", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --color-primary: #673CDB;
   --color-primary-25: #F8F5FF;
@@ -58,10 +58,28 @@
   --color-glassy-md: rgba(229, 231, 235, 0.60);
   --color-glassy-menu: rgba(251, 251, 251, 0.8);
 
+  /* Quiet Workbench */
+  --color-paper: #F6F5F1;
+  --color-paper-2: #FBFAF7;
+  --color-paper-3: #EFEDE7;
+  --color-paper-4: #F3F1EC;
+  --color-line: #E7E4DD;
+  --color-line-soft: #EFEDE7;
+  --color-ink: #1C1A24;
+  --color-ink-2: #55525F;
+  --color-ink-3: #6E6A78;
+  --color-rail: #19171F;
+  --color-rail-active: #2E2B38;
+  --color-rail-icon: #A9A5B4;
+  --color-violet-tint: #F1ECFD;
+  --color-violet-line: #D9CCF8;
+  --color-violet-ink: #4F2BB0;
+
   --shadow: 0 0 8px 0 rgba(0, 0, 0, 0.16);
   --shadow-sm: 0 1px 5px -9px rgba(16, 24, 40, 0.10);
   --shadow-md: 0 10px 15px -3px rgba(16, 24, 40, 0.10);
   --shadow-lg: 0 25px 50px -12px rgba(16, 24, 40, 0.15);
+  --shadow-composer: 0 8px 24px -12px rgb(28 26 36 / 0.18);
 }
 
 @layer base {
@@ -101,15 +119,32 @@
     --color-glassy-md: rgba(46, 48, 58, 0.7);
     --color-glassy-menu: rgba(28, 28, 32, 0.82);
 
+    --color-paper: #141317;
+    --color-paper-2: #18171C;
+    --color-paper-3: #232129;
+    --color-paper-4: #1E1D23;
+    --color-line: #2E2C35;
+    --color-line-soft: #25232B;
+    --color-ink: #F2F1F5;
+    --color-ink-2: #B9B5C4;
+    --color-ink-3: #8F8B9B;
+    --color-rail: #0E0D11;
+    --color-rail-active: #26232F;
+    --color-rail-icon: #8F8B9B;
+    --color-violet-tint: #241A3A;
+    --color-violet-line: #3A2A5C;
+    --color-violet-ink: #BB91FF;
+
     --shadow: 0 0 8px 0 rgba(0, 0, 0, 0.45);
     --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.45);
     --shadow-lg: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+    --shadow-composer: 0 8px 24px -12px rgb(0 0 0 / 0.45);
   }
 
   html {
     font-size: 16px;
     font-family: var(--font-sans);
-    color: var(--color-dark);
+    color: var(--color-ink);
     color-scheme: light;
   }
 
@@ -127,8 +162,8 @@
 
   body {
     margin: 0;
-    background: var(--color-canvas);
-    color: var(--color-dark);
+    background: var(--color-paper);
+    color: var(--color-ink);
   }
 
   /* Keyboard users need to see focus; pointer users do not. */
@@ -143,32 +178,35 @@
     @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5
       text-sm font-semibold text-white transition
       disabled:cursor-not-allowed disabled:opacity-60;
-    background: linear-gradient(180deg, var(--color-primary-300), var(--color-primary));
+    background: var(--color-primary);
   }
 
   .btn-primary:not(:disabled):hover {
-    background: linear-gradient(180deg, var(--color-primary), var(--color-primary-600));
+    background: var(--color-primary-600);
   }
 
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2
-      text-sm font-medium text-secondary transition
-      hover:bg-secondary-100 hover:text-dark disabled:opacity-50;
+      text-sm font-medium text-ink-2 transition
+      hover:bg-paper-3 hover:text-ink disabled:opacity-50;
   }
 
   .field {
-    @apply w-full rounded-xl border border-secondary-200 bg-surface px-4 py-2.5
-      text-sm text-dark transition placeholder:text-secondary-400
+    @apply w-full rounded-xl border border-line bg-surface px-4 py-2.5
+      text-sm text-ink transition placeholder:text-ink-3
       focus:border-primary-300 focus:outline-none;
   }
 
+  .field:focus {
+    box-shadow: 0 0 0 4px var(--color-violet-tint);
+  }
+
   .card {
-    @apply rounded-2xl border border-secondary-200 bg-surface shadow-sm;
+    @apply rounded-2xl border border-line bg-surface shadow-sm;
   }
 
   .chat-answer {
-    @apply rounded-2xl border border-primary-100 bg-primary-25/80 px-5 py-4
-      text-[0.95rem] leading-relaxed shadow-sm;
+    @apply text-[14.5px] leading-[1.7] text-ink;
   }
 }
 
@@ -189,47 +227,50 @@
 
 /* Rendered markdown. Scoped so agent output cannot restyle the app. */
 .prose-agent {
-  @apply text-[0.9375rem] leading-relaxed;
+  @apply text-[14.5px] leading-[1.7] text-ink;
 }
 .prose-agent > * + * {
   @apply mt-3;
 }
 .prose-agent h1, .prose-agent h2, .prose-agent h3 {
-  @apply font-semibold text-dark;
+  @apply font-semibold text-ink;
 }
 .prose-agent h1 { @apply text-lg; }
 .prose-agent h2 { @apply text-base; }
-.prose-agent h3 { @apply text-sm uppercase tracking-wide text-secondary; }
+.prose-agent h3 {
+  @apply mt-1.5 text-[15px] font-semibold normal-case tracking-normal text-ink;
+}
 .prose-agent ul { @apply list-disc ps-5; }
 .prose-agent ol { @apply list-decimal ps-5; }
 /* Not `space-y-1`: applying it here compiles to a malformed selector and the
    rule is dropped, so list items end up flush against each other. */
-.prose-agent li + li { @apply mt-1; }
-.prose-agent a { @apply text-primary underline underline-offset-2; }
+.prose-agent li + li { @apply mt-1.5; }
+.prose-agent a {
+  @apply text-violet-ink underline underline-offset-2;
+}
 .prose-agent img.preview-embed {
-  @apply my-4 max-h-[28rem] w-full rounded-xl object-contain ring-1 ring-secondary-200;
+  @apply my-4 max-h-[28rem] w-full rounded-xl object-contain ring-1 ring-line;
 }
 
-/* docx-preview lives in Shadow DOM — keep only the host sizing here */
 .docx-native-host {
   @apply w-full min-w-0;
 }
 
 .xlsx-preview-table th,
 .xlsx-preview-table td {
-  @apply border border-secondary-200 px-3 py-2 text-start align-top;
+  @apply border border-line px-3 py-2 text-start align-top;
 }
 .xlsx-preview-head th {
-  @apply bg-secondary-100 font-semibold text-dark;
+  @apply bg-paper-3 font-semibold text-ink;
 }
 .xlsx-preview-table tr:nth-child(even):not(.xlsx-preview-head) td {
-  @apply bg-secondary-25;
+  @apply bg-paper-2;
 }
 .prose-agent code {
-  @apply rounded-md bg-secondary-100 px-1.5 py-0.5 font-mono text-[0.85em];
+  @apply rounded-md bg-paper-3 px-1.5 py-0.5 font-mono text-[0.85em];
 }
 .prose-agent pre {
-  @apply overflow-x-auto rounded-xl bg-dark p-4 text-[0.8125rem] text-secondary-200;
+  @apply overflow-x-auto rounded-xl bg-dark p-4 text-[0.8125rem] text-paper dark:text-rail;
   direction: ltr;
   text-align: left;
 }
@@ -237,33 +278,31 @@
   @apply bg-transparent p-0 text-inherit;
 }
 .prose-agent blockquote {
-  @apply border-s-2 border-primary-200 ps-4 text-secondary;
+  @apply border-s-2 border-line ps-4 text-ink-2;
 }
 .prose-agent table {
   @apply w-full min-w-[32rem] border-collapse text-sm;
 }
 .prose-agent .table-wrap {
-  @apply max-w-full overflow-x-auto rounded-xl border border-secondary-200;
+  @apply max-w-full overflow-x-auto rounded-xl border border-line;
 }
 .prose-agent .table-wrap table {
   @apply min-w-[32rem] border-0;
 }
 .prose-agent .table-wrap th,
 .prose-agent .table-wrap td {
-  @apply border-secondary-200;
+  @apply border-line;
 }
 .prose-agent .table-wrap thead th {
-  @apply bg-primary-25 font-semibold text-dark;
+  @apply bg-paper-3 font-semibold text-ink;
 }
 .prose-agent th, .prose-agent td {
-  @apply border border-secondary-200 px-3 py-2 text-start;
+  @apply border border-line px-3 py-2 text-start;
 }
-.prose-agent th { @apply bg-secondary-100 font-semibold; }
+.prose-agent th { @apply bg-paper-3 font-semibold; }
 
-/* Scratch work, not the answer: same markdown, quieter and tighter. Ordered
-   after the base rules so it wins on equal specificity. */
 .prose-agent--compact {
-  @apply text-xs text-secondary;
+  @apply text-[13px] text-ink-2;
 }
 .prose-agent--compact > * + * {
   @apply mt-2;

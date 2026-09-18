@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  ChatSessionBar,
-  type SessionBarProps,
-} from '@/components/chat/ChatSessionBar'
 import { ModelEffortPicker } from '@/components/chat/ModelEffortPicker'
 import { CloseIcon, PaperclipIcon, SendIcon, SpinnerIcon, StopIcon } from '@/components/Icons'
 import type { Effort, StoredFile } from '@/types'
@@ -33,12 +29,14 @@ interface Props {
   editing?: { text: string; onCancel: () => void } | null
   /** HITL: Allow / Deny for gated tools, shown above the text box. */
   approval?: ComposerApproval | null
-  /** Status + context meter footer inside the composer shell. */
-  session?: SessionBarProps | null
   model?: string | null
   effort?: Effort
   onModelChange?: (model: string | null) => void
   onEffortChange?: (effort: Effort) => void
+  /** Tighter padding when centered in the empty-state layout. */
+  compact?: boolean
+  /** Empty chat uses reply vs ask placeholder. */
+  emptyChat?: boolean
 }
 
 const MAX_HEIGHT = 200
@@ -55,11 +53,12 @@ export function Composer({
   onRemoveAttachment,
   editing = null,
   approval = null,
-  session = null,
   model = null,
-  effort = 'medium',
+  effort = 'xhigh',
   onModelChange,
   onEffortChange,
+  compact = false,
+  emptyChat = false,
 }: Props) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
@@ -115,19 +114,14 @@ export function Composer({
     : busy
       ? t('chat.queue')
       : t('chat.send')
+  const showQueueSend = busy && !editing && canSubmit && !approval
 
   return (
-    <div className="relative z-20 shrink-0 px-4 pb-4 pt-2">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 -top-10 h-10
-          bg-gradient-to-t from-primary-25/90 to-transparent"
-      />
-
-      <div className="relative mx-auto max-w-3xl space-y-2">
+    <div className={`relative z-20 shrink-0 ${compact ? '' : ''}`}>
+      <div className="relative mx-auto w-full space-y-2">
         {queue.length > 0 && (
           <div className="flex flex-wrap gap-2 px-1">
-            <span className="self-center text-xs font-medium text-secondary">
+            <span className="self-center text-xs font-medium text-ink-2">
               {t('chat.queued', { count: queue.length })}
             </span>
             {queue.map((item, index) => (
@@ -137,8 +131,8 @@ export function Composer({
                 onClick={() => onRemoveQueued(index)}
                 title={t('chat.removeQueued')}
                 className="group inline-flex max-w-[14rem] items-center gap-1.5 rounded-full
-                  border border-primary-100 bg-surface px-3 py-1 text-xs text-dark
-                  shadow-sm transition hover:border-error-200 hover:text-error"
+                  border border-line bg-surface px-3 py-1 text-xs text-ink
+                  transition hover:border-error-200 hover:text-error"
               >
                 <span className="truncate" dir="auto">
                   {item}
@@ -151,8 +145,8 @@ export function Composer({
 
         {editing && (
           <div
-            className="flex items-center justify-between rounded-2xl border border-primary-200
-              bg-primary-25 px-3.5 py-2 text-xs text-primary"
+            className="flex items-center justify-between rounded-2xl border border-line
+              bg-paper-3 px-3.5 py-2 text-xs text-ink-2"
           >
             <span>{t('chat.editingPrompt')}</span>
             <button
@@ -161,7 +155,7 @@ export function Composer({
                 editing.onCancel()
                 setText('')
               }}
-              className="font-medium underline-offset-2 hover:underline"
+              className="font-medium text-ink underline-offset-2 hover:underline"
             >
               {t('chat.cancelEdit')}
             </button>
@@ -170,16 +164,17 @@ export function Composer({
 
         {approval && (
           <div
-            className="rounded-3xl border border-primary-200 bg-surface/95 px-4 py-3
-              shadow-lg backdrop-blur-md"
+            className="rounded-2xl border border-line bg-surface px-4 py-3"
             role="alertdialog"
             aria-label={t('chat.approvalTitle')}
           >
-            <p className="text-sm font-medium text-dark">{t('chat.approvalTitle')}</p>
-            <p className="mt-0.5 text-xs text-secondary" dir="auto">
+            <p className="text-sm font-medium text-ink">{t('chat.approvalTitle')}</p>
+            <p className="mt-0.5 text-xs text-ink-2" dir="auto">
               {approval.toolName === 'run_python'
                 ? t('chat.approvalRunPython')
-                : t('chat.approvalWrite', { name: approval.fileName })}
+                : approval.toolName === 'convert_upload_to_docx'
+                  ? t('chat.approvalConvert', { name: approval.fileName })
+                  : t('chat.approvalWrite', { name: approval.fileName })}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
@@ -195,8 +190,8 @@ export function Composer({
                 type="button"
                 disabled={approval.pending}
                 onClick={approval.onDeny}
-                className="rounded-xl border border-secondary-200 bg-surface px-4 py-2
-                  text-xs font-medium text-secondary transition hover:border-error-200
+                className="rounded-xl border border-line bg-surface px-4 py-2
+                  text-xs font-medium text-ink-2 transition hover:border-error-200
                   hover:text-error disabled:opacity-50"
               >
                 {t('chat.deny')}
@@ -206,16 +201,16 @@ export function Composer({
         )}
 
         <div
-          className={`rounded-3xl border bg-glassy shadow-lg backdrop-blur-md
-            transition focus-within:shadow-md
+          className={`rounded-[20px] border bg-surface p-3.5 transition
+            shadow-[var(--shadow-composer)]
             ${
               approval
-                ? 'border-primary-200 opacity-90'
-                : 'border-primary-100 focus-within:border-primary-300'
+                ? 'border-violet-line'
+                : 'border-[#E0DCD3] focus-within:border-violet-line dark:border-line'
             }`}
         >
           {pendingAttachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 border-b border-primary-50/80 px-3 pt-3 pb-1">
+            <div className="mb-2 flex flex-wrap gap-1.5">
               {pendingAttachments.map((file) => (
                 <button
                   key={file.id}
@@ -223,8 +218,8 @@ export function Composer({
                   onClick={() => onRemoveAttachment?.(file.id)}
                   title={t('chat.removeAttachment')}
                   className="group inline-flex max-w-[14rem] items-center gap-1.5 rounded-full
-                    border border-primary-100 bg-primary-25 px-2.5 py-1 text-[11px]
-                    font-medium text-primary transition hover:border-error-200
+                    border border-line bg-paper-3 px-2.5 py-1 text-[11px]
+                    font-medium text-ink-2 transition hover:border-error-200
                     hover:bg-error-50 hover:text-error"
                 >
                   <span className="truncate" dir="auto">
@@ -240,124 +235,110 @@ export function Composer({
             </div>
           )}
 
-          <div className="flex items-end gap-2 p-2.5">
-            <input
-              ref={picker}
-              type="file"
-              multiple
-              hidden
-              onChange={(event) => {
-                const chosen = Array.from(event.target.files ?? [])
-                if (chosen.length) onAttach(chosen)
-                event.target.value = ''
-              }}
-            />
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(event) => {
+              const chosen = Array.from(event.target.files ?? [])
+              if (chosen.length) onAttach(chosen)
+              event.target.value = ''
+            }}
+          />
+
+          <textarea
+            ref={textarea}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={onKeyDown}
+            rows={1}
+            disabled={Boolean(approval)}
+            placeholder={
+              approval
+                ? t('chat.approvalPlaceholder')
+                : editing
+                  ? t('chat.editPlaceholder')
+                  : pendingAttachments.length > 0
+                    ? t('chat.attachPlaceholder')
+                    : busy
+                      ? t('chat.queuePlaceholder')
+                      : emptyChat
+                        ? t('chat.placeholder')
+                        : t('chat.replyPlaceholder')
+            }
+            dir="auto"
+            className="max-h-[200px] w-full resize-none bg-transparent py-1
+              text-[14.5px] leading-relaxed outline-none placeholder:text-ink-3
+              disabled:cursor-not-allowed disabled:opacity-70"
+          />
+
+          <div className="mt-1.5 flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => picker.current?.click()}
               disabled={uploading || Boolean(editing) || Boolean(approval)}
               aria-label={t('chat.attach')}
-              className="shrink-0 rounded-2xl p-2.5 text-secondary transition
-                hover:bg-primary-25 hover:text-primary disabled:opacity-50"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg
+                text-ink-2 transition hover:bg-paper-3 hover:text-ink disabled:opacity-50"
             >
               {uploading ? (
-                <SpinnerIcon width={19} height={19} />
+                <SpinnerIcon width={18} height={18} />
               ) : (
-                <PaperclipIcon width={19} height={19} />
+                <PaperclipIcon width={18} height={18} />
               )}
             </button>
 
-            <textarea
-              ref={textarea}
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              onKeyDown={onKeyDown}
-              rows={1}
-              disabled={Boolean(approval)}
-              placeholder={
-                approval
-                  ? t('chat.approvalPlaceholder')
-                  : editing
-                    ? t('chat.editPlaceholder')
-                    : pendingAttachments.length > 0
-                      ? t('chat.attachPlaceholder')
-                      : busy
-                        ? t('chat.queuePlaceholder')
-                        : t('chat.placeholder')
-              }
-              dir="auto"
-              className="max-h-[200px] min-w-0 flex-1 resize-none bg-transparent py-2.5
-                text-sm leading-relaxed outline-none placeholder:text-secondary-400
-                disabled:cursor-not-allowed disabled:opacity-70"
-            />
+            <div className="min-w-0 flex-1" />
+
+            {onModelChange && onEffortChange ? (
+              <ModelEffortPicker
+                model={model}
+                effort={effort}
+                onModelChange={onModelChange}
+                onEffortChange={onEffortChange}
+                variant="composer"
+              />
+            ) : null}
+
+            {showQueueSend ? (
+              <button
+                type="button"
+                onClick={submit}
+                aria-label={t('chat.queue')}
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-full
+                  bg-primary text-white transition hover:bg-primary-600"
+              >
+                <SendIcon width={16} height={16} className="rtl:-scale-x-100" />
+              </button>
+            ) : null}
 
             {busy && !editing ? (
-              <div className="flex shrink-0 items-center gap-1">
-                {!approval && (
-                  <button
-                    type="button"
-                    onClick={submit}
-                    disabled={!canSubmit}
-                    aria-label={t('chat.queue')}
-                    className="rounded-2xl bg-primary-50 p-2.5 text-primary transition
-                      hover:bg-primary-100 disabled:opacity-40"
-                  >
-                    <SendIcon width={19} height={19} className="rtl:-scale-x-100" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={onStop}
-                  aria-label={t('chat.stop')}
-                  className="rounded-2xl bg-secondary-100 p-2.5 text-dark transition
-                    hover:bg-secondary-200"
-                >
-                  <StopIcon width={19} height={19} />
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={onStop}
+                aria-label={t('chat.stop')}
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-full
+                  bg-ink text-paper transition hover:opacity-90"
+              >
+                <StopIcon width={16} height={16} />
+              </button>
             ) : (
               <button
                 type="button"
                 onClick={submit}
                 disabled={!canSubmit}
                 aria-label={sendLabel}
-                className="shrink-0 rounded-2xl p-2.5 text-white transition
-                  disabled:opacity-40"
-                style={
-                  canSubmit
-                    ? {
-                        background:
-                          'linear-gradient(180deg, var(--color-primary-300), var(--color-primary))',
-                      }
-                    : { background: 'var(--color-primary)' }
-                }
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-full
+                  bg-primary text-white transition hover:bg-primary-600 disabled:opacity-40"
               >
-                <SendIcon width={19} height={19} className="rtl:-scale-x-100" />
+                <SendIcon width={16} height={16} className="rtl:-scale-x-100" />
               </button>
             )}
           </div>
-
-          <ChatSessionBar
-            turns={session?.turns ?? []}
-            busy={session?.busy ?? busy}
-            awaitingApproval={session?.awaitingApproval ?? false}
-            queueLength={session?.queueLength ?? queue.length}
-            contextWindow={session?.contextWindow ?? 32_768}
-            contextCompressed={session?.contextCompressed ?? false}
-            contextSummary={session?.contextSummary ?? null}
-            summarizedCount={session?.summarizedCount ?? 0}
-            trailing={
-              onModelChange && onEffortChange ? (
-                <ModelEffortPicker
-                  model={model}
-                  effort={effort}
-                  onModelChange={onModelChange}
-                  onEffortChange={onEffortChange}
-                />
-              ) : null
-            }
-          />
         </div>
+
+        <p className="px-1 text-center text-[11px] text-ink-3">{t('chat.disclaimer')}</p>
       </div>
     </div>
   )

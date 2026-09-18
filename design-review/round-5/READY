@@ -1,0 +1,73 @@
+Round 5 screenshot review — READY
+=================================
+
+Screenshots present (design-review/round-5/):
+  01-en-light-chat.png
+  02-en-light-workspace.png
+  03-en-light-trail-expanded.png
+  04-en-light-running.png
+  05-en-light-empty.png
+  06-ar-light-chat.png
+  07-en-dark-chat.png
+  08-en-light-files.png
+  09-mobile-chat.png
+  10-mobile-drawer.png
+
+Skipped:
+  11-admin-rail.png — skipped; signed-in user is_admin=false (Design Review R5).
+
+Sign-in:
+  Existing account design-review+r5@example.com / ReviewPass123! (UI login; no new registration).
+  Not admin.
+
+Conversation notes:
+  Named id ba7feb70-f2c2-4ce9-ad71-c20b3ae03c84 has only the user turn (n_msgs=1); no finished answer/file.
+  Contentful sibling chat used for finished-answer shots (same as prior 01–04): 9271f37e-f15f-4e55-83da-465d70126fce
+  (“Do exactly this…”, finished answer + design-review-note.docx + web search + later probe turn).
+  No new agent runs started for this resume; 05 is empty new chat only (no send).
+  01–04 left untouched from the earlier partial run. 05–10 taken/retaken this resume
+  (06/07/09/10 corrected after prefs/initScript issues).
+
+Section 7 checklist
+-------------------
+1. English LTR + Arabic RTL three-zone mirrored (rail on start side)
+   PASS — 01 rail on left (LTR); 06 dir=rtl, Arabic chrome (جاهز / أمس / ابحث…), dark rail on the right (start).
+
+2. Light + dark intentional; no leftover cold-grey secondary surfaces in chat
+   PASS — 01 warm paper light; 07 html.dark with deep charcoal panes / white type. Full token sweep not pixel-audited.
+
+3. Sending streams; activity pill live spinner then collapses to summary + green check
+   PASS — 04 “Thinking…” + stop; 01/06/07 collapsed “Searched the web” / “بحث في الويب…” with green check.
+
+4. Background run shows “Running” on chat A’s row while viewing chat B, clears when done
+   NOT CHECKED — 04 shows “Running” on the active row while that chat is open; did not switch to another chat mid-run.
+
+5. Written .docx opens in workspace; violet selected ring; thread narrows to 600px
+   PASS — 07 workspace open, Files tab, design-review-note.docx with purple selection ring.
+   Note: kept 02 looks like workspace closed (near-duplicate of 01); evidence taken from 07 instead.
+
+6. Workspace tabs: Files lists produced files; Sources after web search; Steps shows trail
+   PASS — 07 tabs Preview / Files1 / Sources8 / Steps; Files lists design-review-note.docx (Sources count 8 after search).
+
+7. Approval card (write_file / run_python) approve and reject
+   NOT CHECKED — no approval UI appeared in these screenshots.
+
+8. Branch pill on branched conversations; edit-and-resend still works
+   NOT CHECKED — no branched conversation in the set; edit/resend not exercised.
+
+9. Conversations search filters live; Cmd/Ctrl+K focuses it
+   NOT CHECKED — ⌘K affordance visible (01/05/08/10); live filter / focus not exercised.
+
+10. Empty chat: greeting → composer → starters; starter click sends
+    PASS (layout) — 05 shows “What should we work on?”, composer, four starters.
+    NOT CHECKED for “clicking a starter sends it” (must not send for 05).
+
+11. At 390px: bottom tab bar, drawer open/close with Esc, composer usable, workspace full screen
+    PASS (partial) — 09 bottom tab bar + composer; 10 conversations drawer open.
+    NOT CHECKED — Esc close; mobile workspace full-screen.
+
+12. Keyboard only: Tab reachability, focus ring, icon-button labels
+    NOT CHECKED — no keyboard-only pass in this session.
+
+13. npm run build and npm run lint pass with no new warnings
+    PASS — per task brief for this round (already verified before screenshot step); not re-run here (no code changes).

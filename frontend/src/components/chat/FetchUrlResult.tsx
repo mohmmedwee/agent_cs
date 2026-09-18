@@ -65,13 +65,13 @@ export function FetchUrlResult({
         type="button"
         onClick={() => hasDetails && setOpen((value) => !value)}
         disabled={!hasDetails}
-        className="flex w-full items-center gap-1.5 text-start text-xs text-secondary
+        className="flex w-full items-center gap-1.5 text-start text-xs text-ink-2
           disabled:cursor-default"
         aria-expanded={hasDetails ? open : undefined}
       >
         <span>
           {pending ? t('chat.readingPage') : t('chat.readPage')}{' '}
-          <span className="font-medium text-secondary-400" dir="auto">
+          <span className="font-medium text-ink-3" dir="auto">
             {domain || url || '…'}
           </span>
         </span>
@@ -89,11 +89,11 @@ export function FetchUrlResult({
 
       {showPanel ? (
         <div
-          className={`overflow-hidden rounded-xl border border-secondary-200 bg-surface
+          className={`overflow-hidden rounded-xl border border-line bg-surface
             ${failed ? 'border-error-200 bg-error-50' : ''}`}
         >
           {pending && (
-            <p className="px-3 py-2.5 text-xs text-secondary">{t('chat.readingPage')}</p>
+            <p className="px-3 py-2.5 text-xs text-ink-2">{t('chat.readingPage')}</p>
           )}
 
           {failed && result && (
@@ -108,7 +108,7 @@ export function FetchUrlResult({
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-3 px-3 py-2 text-sm transition
-                hover:bg-secondary-25"
+                hover:bg-paper-3"
             >
               {domain && (
                 <img
@@ -120,11 +120,11 @@ export function FetchUrlResult({
                   loading="lazy"
                 />
               )}
-              <span className="min-w-0 flex-1 truncate text-dark" dir="auto">
+              <span className="min-w-0 flex-1 truncate text-ink" dir="auto">
                 {title}
               </span>
               {domain && (
-                <span className="max-w-[40%] shrink-0 truncate text-xs text-secondary">
+                <span className="max-w-[40%] shrink-0 truncate text-xs text-ink-2">
                   {domain}
                 </span>
               )}
@@ -134,7 +134,7 @@ export function FetchUrlResult({
           {open && preview && (
             <pre
               className="max-h-40 overflow-auto whitespace-pre-wrap border-t
-                border-secondary-200 px-3 py-2 text-xs leading-relaxed text-secondary"
+                border-line px-3 py-2 text-xs leading-relaxed text-ink-2"
               dir="auto"
             >
               {preview}

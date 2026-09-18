@@ -95,16 +95,16 @@ export function WebSearchResults({
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-1.5 text-start text-xs text-secondary"
+        className="flex w-full items-center gap-1.5 text-start text-xs text-ink-2"
         aria-expanded={open}
       >
         <span>
           {pending ? t('chat.searchingWeb') : t('chat.searchedWeb')}{' '}
-          <span className="font-medium text-secondary-400" dir="auto">
+          <span className="font-medium text-ink-3" dir="auto">
             {query || '…'}
           </span>
           {!pending && !failed && hits.length > 0 ? (
-            <span className="font-normal text-secondary">
+            <span className="font-normal text-ink-2">
               {' '}
               · {t('chat.searchHitCount', { count: hits.length })}
             </span>
@@ -127,11 +127,11 @@ export function WebSearchResults({
           <div
             ref={listRef}
             onScroll={updateScrollHint}
-            className={`max-h-64 overflow-y-auto rounded-2xl border border-secondary-200
+            className={`max-h-64 overflow-y-auto rounded-2xl border border-line
               bg-surface ${failed ? 'border-error-200 bg-error-50' : ''}`}
           >
             {pending && (
-              <p className="px-3.5 py-3 text-xs text-secondary">{t('chat.searchingWeb')}</p>
+              <p className="px-3.5 py-3 text-xs text-ink-2">{t('chat.searchingWeb')}</p>
             )}
 
             {failed && result && (
@@ -141,12 +141,12 @@ export function WebSearchResults({
             )}
 
             {!pending && !failed && hits.length === 0 && result && (
-              <p className="px-3.5 py-3 text-xs text-secondary" dir="auto">
+              <p className="px-3.5 py-3 text-xs text-ink-2" dir="auto">
                 {result}
               </p>
             )}
 
-            <ul className="divide-y divide-secondary-200">
+            <ul className="divide-y divide-line">
               {hits.map((hit) => (
                 <li key={hit.url}>
                   <a
@@ -155,7 +155,7 @@ export function WebSearchResults({
                     rel="noopener noreferrer"
                     title={hit.snippet || hit.title}
                     className="flex items-center gap-3 px-3.5 py-2.5 text-sm transition
-                      hover:bg-secondary-25"
+                      hover:bg-paper-3"
                   >
                     <img
                       src={faviconUrl(hit.domain)}
@@ -165,10 +165,10 @@ export function WebSearchResults({
                       className="size-4 shrink-0 rounded-sm"
                       loading="lazy"
                     />
-                    <span className="min-w-0 flex-1 truncate text-dark" dir="auto">
+                    <span className="min-w-0 flex-1 truncate text-ink" dir="auto">
                       {hit.title}
                     </span>
-                    <span className="max-w-[40%] shrink-0 truncate text-xs text-secondary">
+                    <span className="max-w-[40%] shrink-0 truncate text-xs text-ink-2">
                       {hit.domain}
                     </span>
                   </a>
@@ -191,8 +191,8 @@ export function WebSearchResults({
                   listRef.current?.scrollBy({ top: 120, behavior: 'smooth' })
                 }}
                 className="absolute bottom-2 left-1/2 flex size-8 -translate-x-1/2
-                  items-center justify-center rounded-full border border-secondary-200
-                  bg-surface text-secondary shadow-sm transition hover:text-dark"
+                  items-center justify-center rounded-full border border-line
+                  bg-surface text-ink-2 shadow-sm transition hover:text-ink"
               >
                 <ChevronIcon width={16} height={16} className="rotate-90" />
               </button>

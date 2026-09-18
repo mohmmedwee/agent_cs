@@ -174,3 +174,37 @@ export const EditIcon: Icon = (props) => (
     <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 )
+
+export const BranchIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <circle cx="6" cy="5" r="2" />
+    <circle cx="6" cy="19" r="2" />
+    <circle cx="18" cy="8" r="2" />
+    <path d="M6 7v10M18 10c0 4-6 3-11.5 7" />
+  </svg>
+)
+
+export const CodeIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M9 8l-4 4 4 4M15 8l4 4-4 4" />
+  </svg>
+)
+
+export const CompareIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M4 6h10M4 12h16M4 18h12" />
+  </svg>
+)
+
+export const MenuIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </svg>
+)
+
+export const PanelCollapseIcon: Icon = (props) => (
+  <svg {...base} {...props}>
+    <path d="M4 4h16v16H4z" />
+    <path d="M9 4v16" />
+  </svg>
+)

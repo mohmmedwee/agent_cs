@@ -36,14 +36,16 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
     @registry.tool(
         name="write_file",
         description=(
-            "Save text as a file the user can download. Use when the user asks "
-            "to create or export a document, report, summary, spreadsheet, or "
-            "code file. If they describe the columns or topic but give no rows, "
-            "invent a small realistic sample and write it — do not ask for data "
-            "first. Write content as Markdown: .docx becomes a Word document; "
-            ".xlsx turns Markdown tables (or CSV) into a real Excel workbook. "
-            "Other extensions are plain text. PDF and older Office formats "
-            "cannot be produced. Returns the download link."
+            "Save text as a file the user can download. Use when creating NEW "
+            "content from scratch. If they already uploaded Markdown/text and "
+            "want a .docx from it, use `convert_upload_to_docx` instead — do "
+            "not re-read and rewrite large uploads here. If they describe "
+            "columns or a topic but give no rows, invent a small realistic "
+            "sample and write it — do not ask for data first. Write content as "
+            "Markdown: .docx becomes a Word document; .xlsx turns Markdown "
+            "tables (or CSV) into a real Excel workbook. Other extensions are "
+            "plain text. PDF and older Office formats cannot be produced. "
+            "Returns the download link."
         ),
         parameters={
             "type": "object",

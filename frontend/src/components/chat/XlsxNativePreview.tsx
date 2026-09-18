@@ -90,7 +90,7 @@ export function XlsxNativePreview({ fileId }: { fileId: string }) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 p-4 text-sm text-secondary">
+      <div className="flex items-center gap-2 p-4 text-sm text-ink-2">
         <SpinnerIcon width={16} height={16} />
         {t('common.loading')}
       </div>
@@ -106,7 +106,7 @@ export function XlsxNativePreview({ fileId }: { fileId: string }) {
   }
 
   if (sheets.length === 0) {
-    return <p className="p-4 text-sm text-secondary">{t('chat.xlsxEmpty')}</p>
+    return <p className="p-4 text-sm text-ink-2">{t('chat.xlsxEmpty')}</p>
   }
 
   const sheet = sheets[Math.min(active, sheets.length - 1)]
@@ -125,7 +125,7 @@ export function XlsxNativePreview({ fileId }: { fileId: string }) {
                 ${
                   index === active
                     ? 'bg-primary-50 text-primary ring-1 ring-primary-200'
-                    : 'bg-surface text-secondary ring-1 ring-secondary-200 hover:text-dark'
+                    : 'bg-surface text-ink-2 ring-1 ring-line hover:text-ink'
                 }`}
             >
               {item.name}
@@ -136,7 +136,7 @@ export function XlsxNativePreview({ fileId }: { fileId: string }) {
 
       <div
         className="min-w-0 overflow-auto rounded-xl bg-surface shadow-md
-          ring-1 ring-secondary-200"
+          ring-1 ring-line"
       >
         <table className="xlsx-preview-table w-max min-w-full border-collapse text-sm">
           <tbody>

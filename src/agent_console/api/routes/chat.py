@@ -170,6 +170,7 @@ async def chat(
                     jobs.publish(conversation_key, error_payload)
                 finally:
                     approvals.cancel_conversation(conversation_key)
+                    _close_open_tools(blocks)
                     try:
                         await ConversationRepository(session).append(
                             user_id,
@@ -360,6 +361,16 @@ def _collect(event: dict, blocks: list[dict], text_parts: list[str]) -> None:
                 break
     elif kind == "error":
         blocks.append({"kind": "error", "message": event["message"]})
+
+
+def _close_open_tools(blocks: list[dict]) -> None:
+    """Mark tools that never got a result so the UI does not spin forever."""
+    for block in blocks:
+        if block.get("kind") == "tool" and "result" not in block:
+            block["result"] = "Error: interrupted before this finished."
+            block["failed"] = True
+        if block.get("kind") == "skill" and block.get("loading"):
+            block["loading"] = False
 
 
 @router.get("/models")

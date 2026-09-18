@@ -4,6 +4,7 @@
     "tagline": "مساعدك، بأدوات مباشرة"
   },
   "nav": {
+    "main": "الرئيسية",
     "chat": "المحادثة",
     "files": "الملفات",
     "memory": "الذاكرة",
@@ -13,7 +14,16 @@
     "newChat": "محادثة جديدة",
     "conversations": "المحادثات",
     "collapse": "طيّ القائمة",
-    "expand": "توسيع القائمة"
+    "expand": "توسيع القائمة",
+    "searchChats": "ابحث في المحادثات",
+    "groupToday": "اليوم",
+    "groupYesterday": "أمس",
+    "groupWeek": "آخر 7 أيام",
+    "groupOlder": "أقدم",
+    "running": "قيد التشغيل",
+    "noResults": "لا توجد محادثات مطابقة",
+    "switchToArabic": "التبديل إلى العربية",
+    "switchToEnglish": "التبديل إلى الإنجليزية"
   },
   "auth": {
     "loginTitle": "أهلاً بعودتك",
@@ -57,7 +67,9 @@
     "starterCompareLabel": "قارن بين خيارين",
     "starterCompare": "قارن بين Postgres وMongoDB لمشروع جديد. اذكر المصادر إن بحثت عن شيء.",
     "thinking": "جارٍ التفكير…",
+    "working": "جارٍ العمل…",
     "stillWorking": "ما زال يعمل…",
+    "disclaimer": "قد يخطئ. يُرجى التحقق من الإجابات المهمة.",
     "writingArgs": "جارٍ الكتابة… {{size}} ك.ب",
     "writingArgsBytes": "جارٍ الكتابة… {{size}} بايت",
     "writingFileStarting": "جارٍ تجهيز المستند…",
@@ -72,6 +84,7 @@
     "toolSearchFiles": "بحث في الملفات",
     "toolListFiles": "عرض الملفات",
     "toolWriteFile": "كتابة ملف",
+    "toolConvertUpload": "تحويل إلى وورد",
     "toolRunPython": "تشغيل بايثون",
     "toolViewImage": "عرض صورة",
     "toolCalculate": "حساب",
@@ -102,18 +115,21 @@
     "copy": "نسخ",
     "copied": "تم النسخ",
     "renameChat": "إعادة تسمية",
+    "branchBadge": "فرع",
     "deleteChat": "حذف",
     "deleteTitle": "حذف المحادثة",
     "deleteConfirm": "هل تريد حذف هذه المحادثة؟ لا يمكن التراجع عن ذلك.",
     "stopped": "تم الإيقاف.",
     "documentReady": "المستند جاهز",
     "documentKind": "مستند · {{kind}}",
+    "openInWorkspace": "فتح في مساحة العمل",
     "xlsxEmpty": "لا صفوف لعرضها في هذا الجدول.",
     "downloadDocument": "تنزيل",
     "closePreview": "إغلاق المعاينة",
     "expandPreview": "توسيع المعاينة",
     "shrinkPreview": "تصغير المعاينة",
     "searchedWeb": "بحث في الويب عن",
+    "webSearchDone": "بحث في الويب",
     "searchHitCount_one": "نتيجة واحدة",
     "searchHitCount_other": "{{count}} نتائج",
     "searchingWeb": "جارٍ البحث في الويب عن",
@@ -121,6 +137,7 @@
     "activityHide": "إخفاء الخطوات",
     "activityThought": "تفكير",
     "activityWroteFile": "كتب ملفاً",
+    "activityConvertedDocx": "حوّل إلى وورد",
     "activityError": "خطأ",
     "activitySummaryCount": "{{count}} خطوات",
     "searchScrollMore": "المزيد من النتائج",
@@ -138,8 +155,10 @@
     "removeQueued": "إزالة من الطابور",
     "approvalTitle": "السماح بهذا الإجراء؟",
     "approvalWrite": "كتابة الملف «{{name}}»",
+    "approvalConvert": "تحويل «{{name}}» إلى مستند وورد",
     "approvalRunPython": "تشغيل كود بايثون",
     "approvalWaiting": "في انتظار السماح أو الرفض: «{{name}}»",
+    "approvalWaitingConvert": "في انتظار السماح أو الرفض: تحويل «{{name}}»",
     "approvalWaitingPython": "في انتظار السماح أو الرفض: تشغيل بايثون",
     "approvalSubmitting": "جارٍ تطبيق اختيارك…",
     "approvalPlaceholder": "اسمح أو ارفض الإجراء أعلاه…",
@@ -169,7 +188,16 @@
     "contextSummaryOpenHint": "انقر لقراءة ما يراه النموذج بدل الرسائل الأقدم",
     "contextSummaryClose": "إغلاق",
     "notifyDoneTitle": "cleverso-ai",
-    "notifyDoneBody": "ردك جاهز — افتح المحادثة لقراءته."
+    "notifyDoneBody": "ردك جاهز — افتح المحادثة لقراءته.",
+    "greeting": "على ماذا نعمل اليوم؟",
+    "replyPlaceholder": "رد على cleverso-ai…",
+    "stepsSummary": "{{count}} خطوات",
+    "lineCount_zero": "لا أسطر",
+    "lineCount_one": "سطر واحد",
+    "lineCount_two": "سطران",
+    "lineCount_few": "{{count}} أسطر",
+    "lineCount_many": "{{count}} سطرًا",
+    "lineCount_other": "{{count}} سطر"
   },
   "files": {
     "title": "الملفات",
@@ -187,7 +215,14 @@
     "delete": "حذف",
     "deleteConfirm": "هل تريد حذف {{name}}؟",
     "empty": "لا توجد ملفات بعد. ارفع ملفاً ليتمكن الوكيل من قراءته.",
-    "dropHere": "أفلت للرفع"
+    "dropHere": "أفلت للرفع",
+    "search": "ابحث في الملفات",
+    "filterAll": "الكل",
+    "filterDocuments": "مستندات",
+    "filterSpreadsheets": "جداول",
+    "filterImages": "صور",
+    "filterOther": "أخرى",
+    "noFilterResults": "لا توجد ملفات مطابقة لهذا البحث أو التصفية."
   },
   "memory": {
     "title": "الذاكرة",
@@ -260,5 +295,13 @@
     "save": "حفظ",
     "error": "حدث خطأ ما",
     "offline": "تعذّر الوصول إلى الخادم."
+  },
+  "workspace": {
+    "preview": "معاينة",
+    "files": "الملفات",
+    "sources": "المصادر",
+    "steps": "الخطوات",
+    "close": "إغلاق مساحة العمل",
+    "fullscreen": "ملء الشاشة"
   }
 }

@@ -99,7 +99,7 @@ export function DocxNativePreview({ fileId }: { fileId: string }) {
   return (
     <div className="relative min-h-full w-full min-w-0">
       {loading && (
-        <div className="flex items-center gap-2 p-4 text-sm text-secondary">
+        <div className="flex items-center gap-2 p-4 text-sm text-ink-2">
           <SpinnerIcon width={16} height={16} />
           {t('common.loading')}
         </div>

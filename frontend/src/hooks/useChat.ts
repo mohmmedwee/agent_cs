@@ -66,6 +66,9 @@ export function useChat({ conversationId, model, effort, title }: Options) {
   const setTurns = useCallback(
     (value: Turn[] | ((previous: Turn[]) => Turn[])) => {
       setLocalTurns((previous) => {
+        // Never overwrite a live run with a server snapshot — that drops
+        // awaitingApproval and hides Allow / Deny.
+        if (active?.busy) return previous
         const basing = active?.turns ?? previous
         const next = typeof value === 'function' ? value(basing) : value
         if (active) replaceChatRunTurns(active.conversationId, next)

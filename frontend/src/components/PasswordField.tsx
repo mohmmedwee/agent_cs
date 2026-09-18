@@ -42,8 +42,8 @@ export function PasswordField({
         type="button"
         onClick={() => setVisible((shown) => !shown)}
         aria-label={visible ? t('auth.hidePassword') : t('auth.showPassword')}
-        className="absolute end-3 top-1/2 -translate-y-1/2 text-secondary-400
-          transition hover:text-secondary"
+        className="absolute end-3 top-1/2 -translate-y-1/2 text-ink-3
+          transition hover:text-ink-2"
       >
         {visible ? <EyeOffIcon width={18} height={18} /> : <EyeIcon width={18} height={18} />}
       </button>

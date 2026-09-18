@@ -68,7 +68,7 @@ export function MemoryPage() {
       <PageHeader title={t('memory.title')} subtitle={t('memory.subtitle')} />
 
       <div className="card mb-4 p-4">
-        <label className="mb-2 block text-sm font-medium text-dark">
+        <label className="mb-2 block text-sm font-medium text-ink">
           {t('memory.addLabel')}
         </label>
         <textarea
@@ -80,7 +80,7 @@ export function MemoryPage() {
           className="field min-h-[4.5rem] resize-y"
         />
         <div className="mt-3 flex items-center justify-between gap-3">
-          <p className="text-xs text-secondary">{t('memory.addHint')}</p>
+          <p className="text-xs text-ink-2">{t('memory.addHint')}</p>
           <button
             type="button"
             onClick={submitNew}
@@ -99,12 +99,12 @@ export function MemoryPage() {
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center py-12 text-secondary">
+        <div className="flex justify-center py-12 text-ink-2">
           <SpinnerIcon />
         </div>
       ) : memories.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-secondary-200 px-4 py-10
-          text-center text-sm text-secondary">
+        <p className="rounded-2xl border border-dashed border-line px-4 py-10
+          text-center text-sm text-ink-2">
           {t('memory.empty')}
         </p>
       ) : (
@@ -112,7 +112,7 @@ export function MemoryPage() {
           {memories.map((memory) => (
             <li
               key={memory.id}
-              className="rounded-2xl border border-secondary-200 bg-surface px-4 py-3"
+              className="rounded-2xl border border-line bg-surface px-4 py-3"
             >
               {editingId === memory.id ? (
                 <div className="space-y-2">
@@ -140,8 +140,8 @@ export function MemoryPage() {
                         setEditingId(null)
                         setEditText('')
                       }}
-                      className="rounded-xl border border-secondary-200 px-3 py-1.5
-                        text-xs font-medium text-secondary"
+                      className="rounded-xl border border-line px-3 py-1.5
+                        text-xs font-medium text-ink-2"
                     >
                       {t('memory.cancel')}
                     </button>
@@ -149,11 +149,11 @@ export function MemoryPage() {
                 </div>
               ) : (
                 <>
-                  <p className="text-sm text-dark" dir="auto">
+                  <p className="text-sm text-ink" dir="auto">
                     {memory.content}
                   </p>
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-[11px] text-secondary">
+                    <p className="text-[11px] text-ink-2">
                       {t('memory.meta', {
                         source:
                           memory.source === 'user'
@@ -170,7 +170,7 @@ export function MemoryPage() {
                           setEditingId(memory.id)
                           setEditText(memory.content)
                         }}
-                        className="rounded-lg p-1.5 text-secondary transition hover:bg-primary-25
+                        className="rounded-lg p-1.5 text-ink-2 transition hover:bg-primary-25
                           hover:text-primary"
                       >
                         <EditIcon width={14} height={14} />
@@ -183,7 +183,7 @@ export function MemoryPage() {
                             remove.mutate(memory.id)
                           }
                         }}
-                        className="rounded-lg p-1.5 text-secondary transition hover:bg-error-50
+                        className="rounded-lg p-1.5 text-ink-2 transition hover:bg-error-50
                           hover:text-error"
                       >
                         <TrashIcon width={14} height={14} />
