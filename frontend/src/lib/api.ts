@@ -8,6 +8,7 @@ import type {
   StoredFile,
   User,
   UserMemory,
+  UserSkill,
 } from '@/types'
 
 /**
@@ -154,6 +155,35 @@ export const api = {
 
   skills: {
     list: () => request<{ skills: Skill[] }>('/api/skills').then((r) => r.skills),
+    get: (id: string) => request<UserSkill>(`/api/skills/${id}`),
+    generate: (prompt: string, model?: string) =>
+      request<{ name: string; description: string; body: string }>(
+        '/api/skills/generate',
+        {
+          method: 'POST',
+          body: json({ prompt, model }),
+        },
+      ),
+    create: (body: {
+      name: string
+      description: string
+      body: string
+      enabled?: boolean
+    }) =>
+      request<UserSkill>('/api/skills', {
+        method: 'POST',
+        body: json(body),
+      }),
+    update: (
+      id: string,
+      body: { description?: string; body?: string; enabled?: boolean },
+    ) =>
+      request<UserSkill>(`/api/skills/${id}`, {
+        method: 'PATCH',
+        body: json(body),
+      }),
+    remove: (id: string) =>
+      request<void>(`/api/skills/${id}`, { method: 'DELETE' }),
   },
 
   models: () =>
@@ -183,4 +213,7 @@ export type ChatPayload = {
   message: string
   model?: string
   effort?: Effort
+  web_search?: boolean
+  research?: boolean
+  skill?: string | null
 }

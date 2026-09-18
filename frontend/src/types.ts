@@ -103,6 +103,19 @@ export interface UserMemory {
 export interface Skill {
   name: string
   description: string
+  source: 'builtin' | 'user' | string
+  id?: string | null
+  enabled?: boolean
+}
+
+export interface UserSkill {
+  id: string
+  name: string
+  description: string
+  body: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
   source?: string
 }
 

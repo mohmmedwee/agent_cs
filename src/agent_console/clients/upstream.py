@@ -134,19 +134,23 @@ class UpstreamClient:
         *,
         temperature: float = 0.2,
         max_tokens: int = 1_200,
+        effort: str | None = None,
+        timeout: float = 120.0,
     ) -> str:
         """One non-streaming completion; used for context summarization."""
-        body = {
+        body: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": False,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if effort:
+            body["reasoning_effort"] = _upstream_effort(effort)
         response = await self._http.post(
             f"{self._settings.upstream}/chat/completions",
             json=body,
-            timeout=httpx.Timeout(120.0, connect=self._settings.connect_timeout),
+            timeout=httpx.Timeout(timeout, connect=self._settings.connect_timeout),
         )
         if response.status_code >= 400:
             raise UpstreamError(
@@ -154,6 +158,10 @@ class UpstreamClient:
             )
         message = response.json()["choices"][0]["message"]
         text = (message.get("content") or "").strip()
+        if not text:
+            # Thinking models sometimes leave content empty and put the answer
+            # in reasoning_content — scrape JSON/prose from there as a fallback.
+            text = (message.get("reasoning_content") or "").strip()
         if not text:
             raise UpstreamError(f"{model} returned an empty summary")
         return text

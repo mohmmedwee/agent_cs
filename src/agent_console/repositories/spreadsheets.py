@@ -142,23 +142,48 @@ def _prose_lines(markdown: str, skip_tables: bool = True) -> list[str]:
     return kept
 
 
+def _cell_value(text: str) -> tuple[str, bool]:
+    """Strip common inline Markdown; return (plain_text, wants_bold)."""
+    value = (text or "").strip()
+    bold = False
+
+    def _unwrap(pattern: str, mark_bold: bool = False) -> None:
+        nonlocal value, bold
+        match = re.fullmatch(pattern, value, flags=re.DOTALL)
+        if match:
+            value = match.group(1)
+            if mark_bold:
+                bold = True
+
+    _unwrap(r"\*\*(.+)\*\*", mark_bold=True)
+    _unwrap(r"__(.+)__", mark_bold=True)
+    _unwrap(r"\*(.+)\*", mark_bold=True)
+    _unwrap(r"_(.+)_", mark_bold=True)
+    _unwrap(r"`(.+)`")
+    return value, bold
+
+
 def _write_sheet(ws, header: list[str], rows: list[list[str]]) -> None:
     from openpyxl.styles import Font
 
     bold = Font(bold=True)
     for col, value in enumerate(header, start=1):
-        cell = ws.cell(row=1, column=col, value=value)
-        cell.font = bold
+        plain, _wants_bold = _cell_value(value)
+        cell = ws.cell(row=1, column=col, value=plain)
+        cell.font = bold  # header row is always bold
     for row_index, row in enumerate(rows, start=2):
         for col, value in enumerate(row, start=1):
-            ws.cell(row=row_index, column=col, value=value)
-    # Light auto-width (capped).
+            plain, wants_bold = _cell_value(value)
+            cell = ws.cell(row=row_index, column=col, value=plain)
+            if wants_bold:
+                cell.font = bold
+    # Light auto-width (capped) — measure stripped text.
     for col in range(1, len(header) + 1):
         letter = ws.cell(row=1, column=col).column_letter
-        widest = len(str(header[col - 1] or ""))
+        widest = len(str(_cell_value(header[col - 1] or "")[0]))
         for row in rows[:50]:
             if col - 1 < len(row):
-                widest = max(widest, len(str(row[col - 1] or "")))
+                widest = max(widest, len(str(_cell_value(row[col - 1] or "")[0])))
         ws.column_dimensions[letter].width = min(max(widest + 2, 10), 48)
 
 
@@ -203,7 +228,10 @@ def build_xlsx(markdown: str) -> bytes:
         default["A1"] = "Content"
         default["A1"].font = Font(bold=True)
         for row_index, line in enumerate(_prose_lines(markdown, skip_tables=False), start=2):
-            default.cell(row=row_index, column=1, value=line)
+            plain, wants_bold = _cell_value(line)
+            cell = default.cell(row=row_index, column=1, value=plain)
+            if wants_bold:
+                cell.font = Font(bold=True)
         default.column_dimensions["A"].width = 80
         sheet_index = 1
 
@@ -217,7 +245,10 @@ def build_xlsx(markdown: str) -> bytes:
             ws["A1"] = "Notes"
             ws["A1"].font = Font(bold=True)
             for row_index, line in enumerate(notes, start=2):
-                ws.cell(row=row_index, column=1, value=line)
+                plain, wants_bold = _cell_value(line)
+                cell = ws.cell(row=row_index, column=1, value=plain)
+                if wants_bold:
+                    cell.font = Font(bold=True)
             ws.column_dimensions["A"].width = 80
 
     buffer = io.BytesIO()

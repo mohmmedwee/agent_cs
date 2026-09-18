@@ -23,7 +23,9 @@ from agent_console.db.models import User
 from agent_console.repositories.conversations import ConversationRepository
 from agent_console.repositories.files import FileRepository
 from agent_console.repositories.memory import MemoryRepository
+from agent_console.repositories.skill_catalog import SkillCatalog
 from agent_console.repositories.skills import SkillRepository
+from agent_console.repositories.user_skills import UserSkillRepository
 from agent_console.repositories.users import UserRepository
 from agent_console.services.agent import AgentService
 from agent_console.services.approvals import ApprovalBroker
@@ -42,10 +44,12 @@ __all__ = [
     "PasswordHasherDep",
     "SessionTokenDep",
     "SettingsDep",
+    "SkillCatalogDep",
     "SkillRepositoryDep",
     "ToolRegistryDep",
     "UpstreamClientDep",
     "UserRepositoryDep",
+    "UserSkillRepositoryDep",
     "SESSION_COOKIE",
     "set_session_cookie",
     "clear_session_cookie",
@@ -175,15 +179,43 @@ def _memory_repository(session: DbSessionDep, settings: SettingsDep) -> MemoryRe
     )
 
 
+def _user_skill_repository(
+    session: DbSessionDep,
+    settings: SettingsDep,
+    builtins: SkillRepositoryDep,
+) -> UserSkillRepository:
+    return UserSkillRepository(
+        session,
+        max_items=settings.max_user_skills,
+        max_body_chars=settings.max_user_skill_body_chars,
+        reserved_names=builtins.names(),
+    )
+
+
 def _conversation_repository(session: DbSessionDep) -> ConversationRepository:
     return ConversationRepository(session)
 
 
 FileRepositoryDep = Annotated[FileRepository, Depends(_file_repository)]
 MemoryRepositoryDep = Annotated[MemoryRepository, Depends(_memory_repository)]
+UserSkillRepositoryDep = Annotated[
+    UserSkillRepository, Depends(_user_skill_repository)
+]
 ConversationRepositoryDep = Annotated[
     ConversationRepository, Depends(_conversation_repository)
 ]
+
+
+async def _skill_catalog(
+    builtins: SkillRepositoryDep,
+    user_skills: UserSkillRepositoryDep,
+    user: CurrentUserDep,
+) -> SkillCatalog:
+    rows = await user_skills.list_enabled(user.id)
+    return SkillCatalog(builtins, rows)
+
+
+SkillCatalogDep = Annotated[SkillCatalog, Depends(_skill_catalog)]
 
 
 def _tool_registry(
@@ -191,7 +223,7 @@ def _tool_registry(
     settings: SettingsDep,
     files: FileRepositoryDep,
     memories: MemoryRepositoryDep,
-    skills: SkillRepositoryDep,
+    skills: SkillCatalogDep,
     cache: CacheDep,
     user: CurrentUserDep,
     upstream: UpstreamClientDep,
@@ -231,7 +263,7 @@ def _agent_service(
     upstream: UpstreamClientDep,
     tools: ToolRegistryDep,
     settings: SettingsDep,
-    skills: SkillRepositoryDep,
+    skills: SkillCatalogDep,
     approvals: ApprovalBrokerDep,
     memories: MemoryRepositoryDep,
     user: CurrentUserDep,

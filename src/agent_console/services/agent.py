@@ -7,9 +7,10 @@ after `max_steps` rounds.
 
 from collections.abc import AsyncIterator
 from datetime import datetime
+import json
 import logging
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -17,7 +18,8 @@ from agent_console.clients.upstream import UpstreamClient, UpstreamError
 from agent_console.config import Settings
 from agent_console.models.chat import build_tool_message
 from agent_console.repositories.memory import MemoryRepository
-from agent_console.repositories.skills import SkillRepository
+from agent_console.repositories.skill_catalog import SkillCatalog
+from agent_console.repositories.skills import UnknownSkillError
 from agent_console.models.events import (
     AgentEvent,
     DoneEvent,
@@ -46,6 +48,7 @@ _SETUP_TOOLS = frozenset(
         "read_skill",
         "list_uploaded_files",
         "search_uploaded_files",
+        "ask_user",
     }
 )
 # Extra loop iterations so free setup rounds still fit under the ceiling.
@@ -102,7 +105,7 @@ class AgentService:
         upstream: UpstreamClient,
         tools: ToolRegistry,
         settings: Settings,
-        skills: SkillRepository,
+        skills: SkillCatalog,
         approvals: ApprovalBroker,
         memories: MemoryRepository,
         user_id: UUID,
@@ -115,7 +118,13 @@ class AgentService:
         self._memories = memories
         self._user_id = user_id
 
-    async def _system_prompt(self) -> str:
+    async def _system_prompt(
+        self,
+        *,
+        web_search: bool = False,
+        research: bool = False,
+        skill: str | None = None,
+    ) -> str:
         """Base prompt, today's date, user memory, and the skill index.
 
         Only skill names and descriptions go in — the bodies are pulled by the
@@ -133,6 +142,35 @@ class AgentService:
         about = await self._memories.prompt_block(self._user_id)
         if about:
             prompt = f"{prompt}\n\n{about}"
+
+        prefs: list[str] = []
+        if web_search:
+            prefs.append(
+                "Web search is ON for this turn. Use `web_search` (and "
+                "`fetch_url` when needed) for facts, news, docs, or anything "
+                "that may have changed since your training data."
+            )
+        else:
+            prefs.append(
+                "Web search is OFF for this turn. Do not call `web_search` "
+                "unless the user explicitly asks you to search the web."
+            )
+        if research:
+            prefs.append(
+                "Research mode is ON. Prefer loading the `research` skill with "
+                "`read_skill`, then investigate thoroughly before answering."
+            )
+        if skill:
+            prefs.append(
+                f"The user selected the skill `{skill}` (slash command). "
+                "Its full instructions are already loaded in this turn — "
+                "follow them for the reply. Do not call `read_skill` again "
+                f"for {skill!r} unless you need a different skill."
+            )
+        prompt = (
+            f"{prompt}\n\n## Session tools\n\n"
+            + "\n".join(f"- {line}" for line in prefs)
+        )
 
         index = self._skills.index()
         if not index:
@@ -153,6 +191,9 @@ class AgentService:
         effort: str | None = None,
         conversation_id: str | None = None,
         auto_approve_tools: set[str] | None = None,
+        web_search: bool = False,
+        research: bool = False,
+        skill: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Drive the loop, emitting typed events the UI renders by type.
 
@@ -161,9 +202,21 @@ class AgentService:
         answer, so a long tool chain would defeat it.
         """
         conversation: list[dict[str, Any]] = [
-            {"role": "system", "content": await self._system_prompt()},
+            {
+                "role": "system",
+                "content": await self._system_prompt(
+                    web_search=web_search,
+                    research=research,
+                    skill=skill,
+                ),
+            },
             *messages,
         ]
+        # Slash skill must load even when the model skips tools — same
+        # reliability as the old "Use the skill … Call read_skill" prompt.
+        if skill:
+            async for event in self._inject_selected_skill(skill, conversation):
+                yield event
         skip_approval = {
             name
             for name in (auto_approve_tools or set())
@@ -402,6 +455,38 @@ class AgentService:
 
         async for event in self._wrap_up(conversation, chosen, effort, max_steps):
             yield event
+
+    async def _inject_selected_skill(
+        self,
+        skill: str,
+        conversation: list[dict[str, Any]],
+    ) -> AsyncIterator[AgentEvent]:
+        """Pre-load a slash-selected skill into the transcript and UI stream."""
+        call_id = f"skill_{uuid4().hex[:24]}"
+        arguments = json.dumps({"name": skill}, ensure_ascii=False)
+        yield ToolCallEvent(id=call_id, name="read_skill", arguments=arguments)
+        conversation.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "read_skill",
+                            "arguments": arguments,
+                        },
+                    }
+                ],
+            }
+        )
+        try:
+            body = self._skills.read(skill, max_chars=self._settings.max_skill_chars)
+        except UnknownSkillError as exc:
+            body = str(exc)
+        yield ToolResultEvent(id=call_id, name="read_skill", result=body)
+        conversation.append(build_tool_message(call_id, "read_skill", body))
 
     async def _wrap_up(
         self,

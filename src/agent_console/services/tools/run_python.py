@@ -1,10 +1,14 @@
 """Run a short Python script in a disposable working directory.
 
-The model gets a real interpreter for charts, transforms, and exact computation
-that AST `calculate` cannot cover. Isolation is pragmatic, not a hardened jail:
-temp cwd, stripped env, wall-clock timeout, optional memory soft-cap on Linux,
-and HITL before every call. Network is not OS-blocked in v1 — treat approval as
-the primary gate.
+Isolation goals (pragmatic, not a perfect jail):
+- temp cwd only for user files
+- stripped env + minimal PATH (no nvm / user toolchains)
+- wall-clock timeout + optional memory soft-cap
+- on macOS: Seatbelt denies reading/writing under /Users except the venv,
+  and denies network
+- in-process guards block the common escape hatches (subprocess, os.system)
+
+Uploaded inputs are copied in; new files the script writes are saved for download.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import mimetypes
 import os
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 from agent_console.repositories.files import FileTooLargeError, UnknownFileError
@@ -24,10 +29,11 @@ __all__ = ["register"]
 
 _SCRIPT_NAME = "_agent_script.py"
 _RUNNER_NAME = "_agent_runner.py"
+_PROFILE_NAME = "_agent_sandbox.sb"
 _CACHE_DIR = "_sandbox_cache"
 _MAX_CODE_CHARS = 80_000
 _MAX_OUTPUT_FILES = 20
-_SKIP_NAMES = {_SCRIPT_NAME, _RUNNER_NAME}
+_SKIP_NAMES = {_SCRIPT_NAME, _RUNNER_NAME, _PROFILE_NAME}
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -38,19 +44,119 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _runner_source(max_bytes: int) -> str:
-    """Child entrypoint: soft memory cap (when OS allows), then run the script."""
-    return (
-        "import runpy\n"
-        "try:\n"
-        "    import resource\n"
-        f"    _cap = {int(max_bytes)}\n"
-        "    _soft, _hard = resource.getrlimit(resource.RLIMIT_AS)\n"
-        "    if _hard != resource.RLIM_INFINITY:\n"
-        "        _cap = min(_cap, _hard)\n"
-        "    resource.setrlimit(resource.RLIMIT_AS, (_cap, _hard))\n"
-        "except Exception:\n"
-        "    pass\n"
-        f"runpy.run_path({_SCRIPT_NAME!r}, run_name='__main__')\n"
+    """Child entrypoint: soft memory cap, FS/process guards, then run the script."""
+    # Guards run in the child so they apply even when Seatbelt is unavailable.
+    return textwrap.dedent(
+        f"""\
+        import builtins
+        import os
+        import sys
+
+        _CWD = os.path.realpath(os.getcwd())
+        _ALLOWED_PREFIXES = (
+            _CWD,
+            os.path.realpath(sys.prefix),
+            os.path.realpath(sys.base_prefix),
+            "/usr",
+            "/System",
+            "/Library",
+            "/opt",
+            "/tmp",
+            "/private/tmp",
+            "/private/var/folders",
+            "/var/folders",
+        )
+
+        def _allowed(path: str, *, write: bool) -> bool:
+            try:
+                real = os.path.realpath(path)
+            except OSError:
+                return False
+            if write:
+                return real == _CWD or real.startswith(_CWD + os.sep)
+            return any(
+                real == prefix or real.startswith(prefix.rstrip("/") + "/")
+                for prefix in _ALLOWED_PREFIXES
+            )
+
+        _real_open = builtins.open
+
+        def _guarded_open(file, mode="r", *args, **kwargs):
+            path = file if isinstance(file, (str, bytes, os.PathLike)) else str(file)
+            mode_s = mode.decode() if isinstance(mode, bytes) else str(mode)
+            writing = any(flag in mode_s for flag in "wax+")
+            if not _allowed(os.fspath(path), write=writing):
+                raise PermissionError(
+                    f"sandbox: path not allowed in run_python: {{os.fspath(path)!r}}"
+                )
+            return _real_open(file, mode, *args, **kwargs)
+
+        builtins.open = _guarded_open
+
+        def _blocked(*_a, **_k):
+            raise PermissionError(
+                "sandbox: subprocess / shell execution is blocked in run_python"
+            )
+
+        try:
+            import subprocess
+
+            subprocess.Popen = _blocked  # type: ignore[assignment]
+            subprocess.call = _blocked  # type: ignore[assignment]
+            subprocess.run = _blocked  # type: ignore[assignment]
+            subprocess.check_call = _blocked  # type: ignore[assignment]
+            subprocess.check_output = _blocked  # type: ignore[assignment]
+            subprocess.getoutput = _blocked  # type: ignore[assignment]
+            subprocess.getstatusoutput = _blocked  # type: ignore[assignment]
+        except Exception:
+            pass
+
+        for name in ("system", "popen", "execv", "execve", "execvp", "execvpe", "execl", "execlp", "execle"):
+            if hasattr(os, name):
+                setattr(os, name, _blocked)
+
+        try:
+            import resource
+
+            _cap = {int(max_bytes)}
+            _soft, _hard = resource.getrlimit(resource.RLIMIT_AS)
+            if _hard != resource.RLIM_INFINITY:
+                _cap = min(_cap, _hard)
+            resource.setrlimit(resource.RLIMIT_AS, (_cap, _hard))
+        except Exception:
+            pass
+
+        import runpy
+
+        runpy.run_path({_SCRIPT_NAME!r}, run_name="__main__")
+        """
+    )
+
+
+def _seatbelt_profile(*, cwd: Path, venv: Path, base_prefix: Path) -> str:
+    """macOS Seatbelt: block network and home-dir reads outside the venv/cwd."""
+    cwd_s = str(cwd.resolve())
+    venv_s = str(venv.resolve())
+    base_s = str(base_prefix.resolve())
+    return textwrap.dedent(
+        f"""\
+        (version 1)
+        (allow default)
+        (deny network*)
+        (deny file-read*
+          (require-all
+            (regex #"^/Users/")
+            (require-not (subpath "{venv_s}"))
+            (require-not (subpath "{base_s}"))
+            (require-not (subpath "{cwd_s}"))
+          ))
+        (deny file-write*
+          (require-all
+            (regex #"^/Users/")
+            (require-not (subpath "{venv_s}"))
+            (require-not (subpath "{cwd_s}"))
+          ))
+        """
     )
 
 
@@ -94,8 +200,9 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             "and pypdf. Prefer `write_file` with a .docx/.xlsx name for simple "
             "docs/spreadsheets; use `run_python` when you need charts or custom "
             "layout. Optional `inputs` copies uploaded files into the cwd. New "
-            "files the script writes are saved for download. No network. The UI "
-            "asks the user to Allow/Deny; do not ask in chat first."
+            "files the script writes are saved for download. Sandboxed: no "
+            "network, no access to the host home directory, no subprocess/shell. "
+            "Only the temp working directory and staged uploads are readable."
         ),
         parameters={
             "type": "object",
@@ -157,8 +264,8 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             (cwd / _RUNNER_NAME).write_text(_runner_source(mem_bytes), encoding="utf-8")
 
             env = {
-                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-                # Keep caches off the output walk — matplotlib writes fontlist here.
+                # Do not inherit the host PATH (nvm, global npm, homebrew extras).
+                "PATH": "/usr/bin:/bin",
                 "HOME": str(cache),
                 "TMPDIR": str(cache),
                 "MPLCONFIGDIR": str(cache / "mpl"),
@@ -168,14 +275,31 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                 "PYTHONNOUSERSITE": "1",
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONUNBUFFERED": "1",
-                # Headless charting — no display on the API host.
                 "MPLBACKEND": "Agg",
             }
 
+            python = Path(sys.executable).resolve()
+            argv = [str(python), _RUNNER_NAME]
+            if sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file():
+                profile = cwd / _PROFILE_NAME
+                profile.write_text(
+                    _seatbelt_profile(
+                        cwd=cwd,
+                        venv=Path(sys.prefix),
+                        base_prefix=Path(sys.base_prefix),
+                    ),
+                    encoding="utf-8",
+                )
+                argv = [
+                    "/usr/bin/sandbox-exec",
+                    "-f",
+                    str(profile),
+                    *argv,
+                ]
+
             try:
                 process = await asyncio.create_subprocess_exec(
-                    sys.executable,
-                    _RUNNER_NAME,
+                    *argv,
                     cwd=str(cwd),
                     env=env,
                     stdout=asyncio.subprocess.PIPE,

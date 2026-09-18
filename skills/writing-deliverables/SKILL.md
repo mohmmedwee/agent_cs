@@ -83,7 +83,8 @@ Choose by intent — do not default everything to the same look:
 | `editorial` | Neutral default when nothing else fits |
 
 If the user names a look ("make it purple", "formal", "warm"), map it to the
-closest theme above.
+closest theme above. If they only say "restyle" / "brand it" with no colors or
+theme, ask once with a short list of options before you convert.
 
 For Word (`.docx`), also load the `docx` skill: it explains front matter, TOC,
 and that **tables get theme-colored headers automatically** — use Markdown pipe

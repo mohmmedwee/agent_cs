@@ -13,7 +13,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from agent_console.db.base import Base, timestamp_column, utcnow
 
-__all__ = ["Conversation", "Message", "StoredFileRow", "User", "UserMemory"]
+__all__ = [
+    "Conversation",
+    "Message",
+    "StoredFileRow",
+    "User",
+    "UserMemory",
+    "UserSkill",
+]
 
 
 def _pk() -> Mapped[UUID]:
@@ -38,6 +45,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     memories: Mapped[list["UserMemory"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    skills: Mapped[list["UserSkill"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -146,4 +156,28 @@ class UserMemory(Base):
 
     __table_args__ = (
         Index("ix_user_memories_user_updated", "user_id", "updated_at"),
+    )
+
+
+class UserSkill(Base):
+    """A user-authored skill (Markdown body) loaded on demand via read_skill."""
+
+    __tablename__ = "user_skills"
+
+    id: Mapped[UUID] = _pk()
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str] = mapped_column(String(500))
+    body: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = timestamp_column()
+    updated_at: Mapped[datetime] = timestamp_column(onupdate=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="skills")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_user_skills_user_name"),
+        Index("ix_user_skills_user_updated", "user_id", "updated_at"),
     )

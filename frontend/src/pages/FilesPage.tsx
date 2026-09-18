@@ -34,6 +34,7 @@ function badgeShort(name: string): string {
   const lower = name.toLowerCase()
   if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'DOC'
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) return 'XLS'
+  if (lower.endsWith('.pptx') || lower.endsWith('.ppt')) return 'PPT'
   const ext = fileExt(name)
   if (!ext) return 'FILE'
   if (ext.length <= 4) return ext.toUpperCase()
@@ -44,7 +45,7 @@ function fileKind(name: string): Exclude<FileFilter, 'all'> {
   const ext = fileExt(name)
   if (isImageFileName(name)) return 'images'
   if (['xlsx', 'xls', 'csv'].includes(ext)) return 'spreadsheets'
-  if (['doc', 'docx', 'pdf', 'txt', 'md', 'rtf', 'odt', 'html', 'htm'].includes(ext)) {
+  if (['doc', 'docx', 'pdf', 'txt', 'md', 'rtf', 'odt', 'html', 'htm', 'pptx', 'ppt'].includes(ext)) {
     return 'documents'
   }
   return 'other'

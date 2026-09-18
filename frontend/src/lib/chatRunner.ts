@@ -40,6 +40,9 @@ interface ActiveRun {
   listeners: Set<Listener>
   version: number
   emitRaf: number
+  webSearch: boolean
+  research: boolean
+  skill: string | null
 }
 
 /** Survives ChatPage unmount so leaving a chat does not abort the stream. */
@@ -345,7 +348,15 @@ async function pump(run: ActiveRun, message: string, model?: string, effort?: Ef
   let aborted = false
   try {
     const stream = streamChat(
-      { conversation_id: run.conversationId, message, model, effort },
+      {
+        conversation_id: run.conversationId,
+        message,
+        model,
+        effort,
+        web_search: run.webSearch,
+        research: run.research,
+        skill: run.skill,
+      },
       run.controller.signal,
     )
     for await (const event of stream) {
@@ -470,6 +481,9 @@ export function startChatRun(options: {
   model?: string
   effort?: Effort
   title?: string
+  webSearch?: boolean
+  research?: boolean
+  skill?: string | null
 }): void {
   const existing = runs.get(options.conversationId)
   if (existing?.busy) {
@@ -496,6 +510,9 @@ export function startChatRun(options: {
     listeners: new Set(waiters.get(options.conversationId) ?? []),
     version: 0,
     emitRaf: 0,
+    webSearch: options.webSearch ?? false,
+    research: options.research ?? false,
+    skill: options.skill ?? null,
   }
   waiters.delete(options.conversationId)
   runs.set(options.conversationId, run)
@@ -545,6 +562,9 @@ export async function resumeChatRunIfActive(options: {
     listeners: new Set(waiters.get(options.conversationId) ?? []),
     version: 0,
     emitRaf: 0,
+    webSearch: false,
+    research: false,
+    skill: null,
   }
   waiters.delete(options.conversationId)
   runs.set(options.conversationId, run)

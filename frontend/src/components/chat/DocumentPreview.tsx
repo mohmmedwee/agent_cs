@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useArtifact } from '@/components/chat/ArtifactContext'
 import { DocxNativePreview } from '@/components/chat/DocxNativePreview'
 import { Markdown } from '@/components/chat/Markdown'
+import { PptxNativePreview } from '@/components/chat/PptxNativePreview'
 import {
   parseSearchResultText,
   type ParsedSearchHit,
@@ -34,10 +35,15 @@ function isXlsxFileName(name: string): boolean {
   return name.toLowerCase().endsWith('.xlsx')
 }
 
+function isPptxFileName(name: string): boolean {
+  return name.toLowerCase().endsWith('.pptx')
+}
+
 function extensionLabel(name: string): string {
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
   if (ext === 'docx' || ext === 'doc') return 'Word document'
   if (ext === 'xlsx' || ext === 'xls') return 'Spreadsheet'
+  if (ext === 'pptx' || ext === 'ppt') return 'Presentation'
   if (ext === 'csv') return 'CSV'
   if (ext === 'pdf') return 'PDF'
   if (ext === 'md') return 'Markdown'
@@ -56,6 +62,9 @@ export function fileBadgeClass(name: string): string {
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv')) {
     return 'bg-[#E6F4EA] text-[#1E7B34] dark:bg-[#14532D] dark:text-[#86EFAC]'
   }
+  if (lower.endsWith('.pptx') || lower.endsWith('.ppt')) {
+    return 'bg-[#FFF3E8] text-[#C2410C] dark:bg-[#431407] dark:text-[#FDBA74]'
+  }
   if (lower.endsWith('.pdf')) {
     return 'bg-[#FDECEC] text-[#B42318] dark:bg-[#450A0A] dark:text-[#FCA5A5]'
   }
@@ -69,6 +78,7 @@ function badgeShort(name: string): string {
   const lower = name.toLowerCase()
   if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'DOC'
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) return 'XLS'
+  if (lower.endsWith('.pptx') || lower.endsWith('.ppt')) return 'PPT'
   const kind = extensionLabel(name)
   if (kind.length <= 4) return kind
   return kind.slice(0, 3).toUpperCase()
@@ -458,6 +468,7 @@ export function ArtifactPanel({ turns = [] }: { turns?: Turn[] }) {
   const isImage = artifact ? isImageFileName(artifact.name) : false
   const isDocx = artifact ? isDocxFileName(artifact.name) : false
   const isXlsx = artifact ? isXlsxFileName(artifact.name) : false
+  const isPptx = artifact ? isPptxFileName(artifact.name) : false
 
   const visibleTabs = useMemo(() => {
     const list: WorkspaceTab[] = ['preview', 'files']
@@ -480,7 +491,8 @@ export function ArtifactPanel({ turns = [] }: { turns?: Turn[] }) {
     if (
       isImageFileName(artifact.name) ||
       isDocxFileName(artifact.name) ||
-      isXlsxFileName(artifact.name)
+      isXlsxFileName(artifact.name) ||
+      isPptxFileName(artifact.name)
     ) {
       setBody('')
       setError('')
@@ -647,7 +659,7 @@ export function ArtifactPanel({ turns = [] }: { turns?: Turn[] }) {
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-paper-4 p-6">
+      <div className="min-h-0 flex-1 overflow-auto bg-paper-4 p-6">
         {tab === 'preview' && isImage ? (
           <div className="flex items-start justify-center">
             <img
@@ -659,16 +671,21 @@ export function ArtifactPanel({ turns = [] }: { turns?: Turn[] }) {
           </div>
         ) : null}
         {tab === 'preview' && isDocx ? (
-          <div className="rounded bg-white p-2 shadow-[0_1px_2px_rgb(28_26_36/0.06),0_8px_24px_-16px_rgb(28_26_36/0.25)]">
+          <div className="min-h-min min-w-0">
             <DocxNativePreview fileId={artifact.fileId} />
           </div>
         ) : null}
         {tab === 'preview' && isXlsx ? (
-          <div className="rounded bg-white p-2 shadow-[0_1px_2px_rgb(28_26_36/0.06),0_8px_24px_-16px_rgb(28_26_36/0.25)]">
+          <div className="flex min-h-full min-w-0 flex-col">
             <XlsxNativePreview fileId={artifact.fileId} />
           </div>
         ) : null}
-        {tab === 'preview' && !isImage && !isDocx && !isXlsx ? (
+        {tab === 'preview' && isPptx ? (
+          <div className="min-h-min min-w-0">
+            <PptxNativePreview fileId={artifact.fileId} />
+          </div>
+        ) : null}
+        {tab === 'preview' && !isImage && !isDocx && !isXlsx && !isPptx ? (
           <div
             className="mx-auto min-h-full max-w-2xl rounded bg-white px-8 py-10
               shadow-[0_1px_2px_rgb(28_26_36/0.06),0_8px_24px_-16px_rgb(28_26_36/0.25)]

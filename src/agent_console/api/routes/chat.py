@@ -26,6 +26,8 @@ from agent_console.repositories.conversations import (
 )
 from agent_console.repositories.files import FileRepository
 from agent_console.repositories.memory import MemoryRepository
+from agent_console.repositories.skill_catalog import SkillCatalog
+from agent_console.repositories.user_skills import UserSkillRepository
 from agent_console.schemas.chat import (
     ChatRequest,
     ModelInfo,
@@ -120,13 +122,27 @@ async def chat(
                 files = FileRepository(
                     session, upload_dir, settings.max_upload_bytes
                 )
-                memories = MemoryRepository(session)
+                memories = MemoryRepository(
+                    session,
+                    max_items=settings.max_memory_items,
+                    max_chars=settings.max_memory_chars,
+                )
+                user_skills = UserSkillRepository(
+                    session,
+                    max_items=settings.max_user_skills,
+                    max_body_chars=settings.max_user_skill_body_chars,
+                    reserved_names=state.skill_repository.names(),
+                )
+                skills = SkillCatalog(
+                    state.skill_repository,
+                    await user_skills.list_enabled(user_id),
+                )
                 tools = build_registry(
                     ToolContext(
                         settings=settings,
                         files=files,
                         memories=memories,
-                        skills=state.skill_repository,
+                        skills=skills,
                         search=state.search_backend,
                         pages=PageFetcher(
                             http=state.http_client,
@@ -142,7 +158,7 @@ async def chat(
                     upstream=upstream,
                     tools=tools,
                     settings=settings,
-                    skills=state.skill_repository,
+                    skills=skills,
                     approvals=approvals,
                     memories=memories,
                     user_id=user_id,
@@ -154,6 +170,9 @@ async def chat(
                         effort=request.effort,
                         conversation_id=conversation_key,
                         auto_approve_tools=set(request.auto_approve_tools),
+                        web_search=request.web_search,
+                        research=request.research,
+                        skill=request.skill,
                     ):
                         if cancel.is_set():
                             break

@@ -7,7 +7,7 @@ from agent_console.clients.upstream import UpstreamClient
 from agent_console.config import Settings
 from agent_console.repositories.files import FileRepository
 from agent_console.repositories.memory import MemoryRepository
-from agent_console.repositories.skills import SkillRepository
+from agent_console.repositories.skill_catalog import SkillCatalog
 
 __all__ = ["ToolContext"]
 
@@ -26,7 +26,7 @@ class ToolContext:
     settings: Settings
     files: FileRepository
     memories: MemoryRepository
-    skills: SkillRepository
+    skills: SkillCatalog
     search: SearchBackend
     pages: PageFetcher
     cache: ResponseCache

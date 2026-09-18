@@ -2,7 +2,16 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ModelEffortPicker } from '@/components/chat/ModelEffortPicker'
-import { CloseIcon, PaperclipIcon, SendIcon, SpinnerIcon, StopIcon } from '@/components/Icons'
+import {
+  ComposerPlusMenu,
+  type ComposerTools,
+} from '@/components/chat/ComposerPlusMenu'
+import {
+  CloseIcon,
+  SendIcon,
+  SpinnerIcon,
+  StopIcon,
+} from '@/components/Icons'
 import type { Effort, StoredFile } from '@/types'
 
 export interface ComposerApproval {
@@ -18,7 +27,7 @@ interface Props {
   busy: boolean
   uploading: boolean
   queue: string[]
-  onSend: (text: string) => void
+  onSend: (text: string, tools: ComposerTools) => void
   onStop: () => void
   onAttach: (files: File[]) => void
   onRemoveQueued: (index: number) => void
@@ -62,8 +71,12 @@ export function Composer({
 }: Props) {
   const { t } = useTranslation()
   const [text, setText] = useState('')
+  const [tools, setTools] = useState<ComposerTools>({
+    webSearch: true,
+    research: false,
+    skill: null,
+  })
   const textarea = useRef<HTMLTextAreaElement>(null)
-  const picker = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (editing) {
@@ -85,12 +98,31 @@ export function Composer({
     node.style.height = `${Math.min(node.scrollHeight, MAX_HEIGHT)}px`
   }, [text])
 
+  const applyTools = (next: ComposerTools) => {
+    setTools(next)
+    queueMicrotask(() => textarea.current?.focus())
+  }
+
   const submit = () => {
     if (approval) return
-    const trimmed = text.trim()
-    if (!trimmed && pendingAttachments.length === 0) return
-    onSend(trimmed)
+    // Drop a typed slash prefix if the chip already owns that skill.
+    let trimmed = text.trim()
+    if (tools.skill) {
+      trimmed = trimmed
+        .replace(new RegExp(`^/${tools.skill}(?=\\s|$)\\s*`), '')
+        .trim()
+    }
+    const skill = tools.skill
+    if (!trimmed && pendingAttachments.length === 0 && !skill) return
+    // Bubble shows `/skill …`; chip itself is not editable text.
+    const message = skill
+      ? trimmed
+        ? `/${skill} ${trimmed}`
+        : `/${skill}`
+      : trimmed
+    onSend(message, { ...tools, skill })
     setText('')
+    setTools((prev) => ({ ...prev, skill: null }))
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -101,6 +133,17 @@ export function Composer({
       return
     }
     if (approval) return
+    // Backspace on empty input clears the slash skill token (Claude-style).
+    if (
+      event.key === 'Backspace' &&
+      !text &&
+      tools.skill &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault()
+      setTools((prev) => ({ ...prev, skill: null }))
+      return
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
       submit()
@@ -108,7 +151,10 @@ export function Composer({
   }
 
   const canSubmit =
-    (Boolean(text.trim()) || pendingAttachments.length > 0) && !approval
+    (Boolean(text.trim()) ||
+      pendingAttachments.length > 0 ||
+      Boolean(tools.skill)) &&
+    !approval
   const sendLabel = editing
     ? t('chat.saveEdit')
     : busy
@@ -235,59 +281,55 @@ export function Composer({
             </div>
           )}
 
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => {
-              const chosen = Array.from(event.target.files ?? [])
-              if (chosen.length) onAttach(chosen)
-              event.target.value = ''
-            }}
-          />
-
-          <textarea
-            ref={textarea}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={onKeyDown}
-            rows={1}
-            disabled={Boolean(approval)}
-            placeholder={
-              approval
-                ? t('chat.approvalPlaceholder')
-                : editing
-                  ? t('chat.editPlaceholder')
-                  : pendingAttachments.length > 0
-                    ? t('chat.attachPlaceholder')
-                    : busy
-                      ? t('chat.queuePlaceholder')
-                      : emptyChat
-                        ? t('chat.placeholder')
-                        : t('chat.replyPlaceholder')
-            }
-            dir="auto"
-            className="max-h-[200px] w-full resize-none bg-transparent py-1
-              text-[14.5px] leading-relaxed outline-none placeholder:text-ink-3
-              disabled:cursor-not-allowed disabled:opacity-70"
-          />
+          <div className="flex items-start gap-2">
+            {tools.skill ? (
+              <button
+                type="button"
+                onClick={() => setTools((prev) => ({ ...prev, skill: null }))}
+                title={t('chat.clearSkill')}
+                className="mt-1 shrink-0 font-mono text-[14.5px] font-medium text-primary
+                  transition hover:opacity-70"
+              >
+                /{tools.skill}
+              </button>
+            ) : null}
+            <textarea
+              ref={textarea}
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              onKeyDown={onKeyDown}
+              rows={1}
+              disabled={Boolean(approval)}
+              placeholder={
+                approval
+                  ? t('chat.approvalPlaceholder')
+                  : tools.skill
+                    ? t('chat.skillPlaceholder')
+                    : editing
+                      ? t('chat.editPlaceholder')
+                      : pendingAttachments.length > 0
+                        ? t('chat.attachPlaceholder')
+                        : busy
+                          ? t('chat.queuePlaceholder')
+                          : emptyChat
+                            ? t('chat.placeholder')
+                            : t('chat.replyPlaceholder')
+              }
+              dir="auto"
+              className="max-h-[200px] min-w-0 flex-1 resize-none bg-transparent py-1
+                text-[14.5px] leading-relaxed outline-none placeholder:text-ink-3
+                disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </div>
 
           <div className="mt-1.5 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => picker.current?.click()}
-              disabled={uploading || Boolean(editing) || Boolean(approval)}
-              aria-label={t('chat.attach')}
-              className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg
-                text-ink-2 transition hover:bg-paper-3 hover:text-ink disabled:opacity-50"
-            >
-              {uploading ? (
-                <SpinnerIcon width={18} height={18} />
-              ) : (
-                <PaperclipIcon width={18} height={18} />
-              )}
-            </button>
+            <ComposerPlusMenu
+              uploading={uploading}
+              disabled={Boolean(editing) || Boolean(approval)}
+              tools={tools}
+              onToolsChange={applyTools}
+              onAttach={onAttach}
+            />
 
             <div className="min-w-0 flex-1" />
 

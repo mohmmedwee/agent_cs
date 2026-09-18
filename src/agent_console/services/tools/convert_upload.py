@@ -245,8 +245,9 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         if suffix and suffix not in _SOURCE_SUFFIXES:
             return (
                 f"Error: convert_upload_to_docx expects Markdown or plain text "
-                f"(.md / .txt); got {row.name!r}. For a new doc from scratch use "
-                "`write_file` with a .docx name."
+                f"(.md / .txt); got {row.name!r}. To edit an existing .docx use "
+                "`run_python` with python-docx (stage the file via `inputs`), "
+                "or for a short new doc use `write_file` with a .docx name."
             )
 
         try:

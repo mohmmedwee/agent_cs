@@ -256,15 +256,63 @@
   @apply w-full min-w-0;
 }
 
+.pptx-native-host {
+  @apply w-full min-w-0;
+}
+.pptx-native-host :where(.pptx-slide, [data-slide], .slide) {
+  @apply mx-auto mb-4 max-w-full;
+}
+.pptx-native-host > * {
+  @apply flex flex-col gap-4;
+}
+
+.xlsx-preview {
+  @apply min-h-[16rem];
+}
+.xlsx-preview-frame {
+  @apply rounded-t-lg bg-white ring-1 ring-line;
+}
+.xlsx-preview-table {
+  @apply w-max min-w-full border-collapse text-[12px] leading-snug text-ink;
+}
 .xlsx-preview-table th,
 .xlsx-preview-table td {
-  @apply border border-line px-3 py-2 text-start align-top;
+  @apply border border-line-soft px-2 py-1 text-start align-top whitespace-pre-wrap;
 }
-.xlsx-preview-head th {
+.xlsx-preview-corner,
+.xlsx-preview-colhead,
+.xlsx-preview-rowhead {
+  @apply sticky z-[1] bg-paper-3 text-center text-[10px] font-medium tabular-nums text-ink-3;
+}
+.xlsx-preview-corner {
+  @apply start-0 top-0 z-[2] min-w-8 w-8;
+}
+.xlsx-preview-colhead {
+  @apply top-0 min-w-[4.5rem] font-semibold;
+}
+.xlsx-preview-rowhead {
+  @apply start-0 min-w-8 w-8 px-1;
+}
+.xlsx-preview-head th:not(.xlsx-preview-rowhead) {
   @apply bg-paper-3 font-semibold text-ink;
 }
-.xlsx-preview-table tr:nth-child(even):not(.xlsx-preview-head) td {
-  @apply bg-paper-2;
+.xlsx-preview-bold {
+  @apply font-semibold;
+}
+.xlsx-preview-table tbody tr:nth-child(even):not(.xlsx-preview-head) td {
+  @apply bg-paper-2/60;
+}
+.xlsx-preview-tabs {
+  @apply flex gap-0 overflow-x-auto border border-t-0 border-line bg-paper-3
+    rounded-b-lg;
+}
+.xlsx-preview-tab {
+  @apply shrink-0 border-e border-line px-3 py-1.5 text-[11px] font-medium
+    text-ink-2 transition hover:bg-paper-2 hover:text-ink max-w-[12rem] truncate;
+}
+.xlsx-preview-tab.is-active {
+  @apply bg-white text-ink relative;
+  box-shadow: inset 0 2px 0 0 var(--color-primary, #6d28d9);
 }
 .prose-agent code {
   @apply rounded-md bg-paper-3 px-1.5 py-0.5 font-mono text-[0.85em];

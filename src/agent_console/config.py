@@ -204,6 +204,16 @@ class Settings(BaseSettings):
         gt=0,
         description="Characters of a skill body read_skill returns before truncating.",
     )
+    max_user_skills: int = Field(
+        default=20,
+        gt=0,
+        description="Max custom skills a user may store.",
+    )
+    max_user_skill_body_chars: int = Field(
+        default=12_000,
+        gt=0,
+        description="Max characters for one user-authored skill body.",
+    )
 
     # Order matters: later directories win a name clash, so the project's own
     # skills come last and override anything with the same name in a shared
@@ -254,6 +264,7 @@ class Settings(BaseSettings):
             "brand-guidelines",
             "internal-comms",
             "canvas-design",
+            "skill-creator",
         },
         description=(
             "If non-empty, only these skill names are loaded. Use it to pull a few "
@@ -359,6 +370,25 @@ class Settings(BaseSettings):
         "Never spam the same character or short laugh forever (no walls of "
         "هههههه or hahaha). A short natural laugh or smile is enough — then "
         "continue the conversation.\n\n"
+        "## Ask before you change things (critical)\n"
+        "When the request is ambiguous, ask first — do not guess and rewrite "
+        "the wrong file or invent a look they did not want.\n\n"
+        "Use the `ask_user` tool for this: pass a short `question` and 2–8 "
+        "`options` (clickable in the UI). Typical cases:\n"
+        "- Which document — call `list_uploaded_files` once if needed, then "
+        "`ask_user` with the relevant file names as options (plus what to "
+        "change if they did not say).\n"
+        "- Design / colors / theme — offer 2–4 concrete options "
+        "(e.g. cleverso, classic, modern, or named color palettes).\n"
+        "- Content edits — if they did not give the new wording, ask what to "
+        "put instead.\n\n"
+        "After `ask_user`, STOP. Do not call more tools until they reply. "
+        "Only skip asking when they already named a unique file, attached one "
+        "file this turn, clearly mean the file you just produced, or the "
+        "request is fully specified.\n\n"
+        "Do NOT ask permission to run tools you already have "
+        "(`run_python`, search, list files). Do NOT ask more than two questions "
+        "at once (one `ask_user` call is enough).\n\n"
         "## Creating files\n"
         "When the user asks you to create or export a .xlsx / .docx / .md / .csv "
         "with a described shape (for example \"sales.xlsx with regions and "
@@ -371,9 +401,12 @@ class Settings(BaseSettings):
         "document from it (especially a long report), call "
         "`convert_upload_to_docx` with the upload name and theme — do NOT "
         "`read_uploaded_file` the whole body and then `write_file` it back. "
-        "That path crashes local models on large files. To update content, "
-        "pass small `replacements` (find/replace) or `sections` (one heading "
-        "at a time) on that same tool — never rewrite the entire upload."
+        "That path crashes local models on large files. To update Markdown "
+        "content, pass small `replacements` or `sections` on that same tool. "
+        "If the only upload is already a .docx, do not call "
+        "`convert_upload_to_docx` — edit it with `run_python` + python-docx "
+        "(or `write_file` a short new .docx). Pick one path and finish; do "
+        "not debate tools in the reply."
     )
 
     @field_validator("upstream")

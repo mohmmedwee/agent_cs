@@ -95,7 +95,10 @@ export function useChat({ conversationId, model, effort, title }: Options) {
   )
 
   const send = useCallback(
-    (text: string) => {
+    (
+      text: string,
+      options?: { webSearch?: boolean; research?: boolean; skill?: string | null },
+    ) => {
       const trimmed = text.trim()
       if (!trimmed || !conversationId) return
 
@@ -111,13 +114,20 @@ export function useChat({ conversationId, model, effort, title }: Options) {
         model,
         effort,
         title,
+        webSearch: options?.webSearch,
+        research: options?.research,
+        skill: options?.skill,
       })
     },
     [busy, conversationId, turns, model, effort, title],
   )
 
   const editAndResend = useCallback(
-    async (turnIndex: number, text: string) => {
+    async (
+      turnIndex: number,
+      text: string,
+      options?: { webSearch?: boolean; research?: boolean; skill?: string | null },
+    ) => {
       const trimmed = text.trim()
       if (!trimmed || !conversationId || busy) return
 
@@ -138,6 +148,9 @@ export function useChat({ conversationId, model, effort, title }: Options) {
         model,
         effort,
         title,
+        webSearch: options?.webSearch,
+        research: options?.research,
+        skill: options?.skill,
       })
     },
     [conversationId, turns, busy, model, effort, title, queryClient],

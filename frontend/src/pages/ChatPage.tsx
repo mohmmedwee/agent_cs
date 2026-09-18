@@ -14,6 +14,7 @@ import {
   writeFilePayload,
   convertUploadPayload,
 } from '@/components/chat/DocumentPreview'
+import { ChoicePrompt, askUserPayload } from '@/components/chat/ChoicePrompt'
 import { Logo } from '@/components/Logo'
 import {
   BranchIcon,
@@ -46,6 +47,20 @@ import { normalizeEffort } from '@/types'
 
 function isProgressKind(block: Block): boolean {
   return block.kind === 'tool' || block.kind === 'skill' || block.kind === 'reasoning'
+}
+
+/** Highlight a leading `/skill-name` token the way the composer chip looks. */
+function UserSlashText({ text }: { text: string }) {
+  const match = text.match(/^(\/[a-z][a-z0-9-]*)(\s|$)/)
+  if (!match) return <>{text}</>
+  const token = match[1]
+  const rest = text.slice(token.length)
+  return (
+    <>
+      <span className="font-mono font-medium text-primary">{token}</span>
+      {rest}
+    </>
+  )
 }
 
 /**
@@ -177,6 +192,7 @@ function activityLabel(
     if (block.name === 'write_file') return t('chat.activityWroteFile')
     if (block.name === 'convert_upload_to_docx') return t('chat.activityConvertedDocx')
     if (block.name === 'run_python') return t('chat.activityRanPython')
+    if (block.name === 'ask_user') return t('chat.toolAskUser')
     return toolDisplayName(block.name, t)
   }
   if (block.kind === 'error') return t('chat.activityError')
@@ -310,23 +326,33 @@ function TurnActivity({
 }
 
 /**
- * Activity pill first, then answer, then downloads.
+ * Activity pill first, then answer, then interactive choices, then downloads.
  */
 function AssistantTurnBlocks({
   blocks,
   turnComplete,
+  choicesInteractive = false,
+  onChoice,
 }: {
   blocks: Block[]
   turnComplete: boolean
+  /** Latest finished turn: choice chips are clickable. */
+  choicesInteractive?: boolean
+  onChoice?: (option: string) => void
 }) {
   const trail: Block[] = []
   const answers: Block[] = []
   const files: Extract<Block, { kind: 'tool' }>[] = []
+  const choiceBlocks: Extract<Block, { kind: 'tool' }>[] = []
 
   blocks.forEach((block, index) => {
     if (block.kind === 'text') {
       if (isInterimText(blocks, index, turnComplete)) trail.push(block)
       else answers.push(block)
+      return
+    }
+    if (block.kind === 'tool' && block.name === 'ask_user') {
+      choiceBlocks.push(block)
       return
     }
     if (isWrittenFileBlock(block)) {
@@ -340,6 +366,10 @@ function AssistantTurnBlocks({
     (block) => block.kind === 'text' && block.text.trim().length > 0,
   )
   const showFiles = files.length > 0 && (hasAnswer || turnComplete)
+
+  const choiceCards = choiceBlocks
+    .map((block) => askUserPayload(block.args, block.result))
+    .filter((payload): payload is NonNullable<typeof payload> => Boolean(payload))
 
   return (
     <>
@@ -358,6 +388,20 @@ function AssistantTurnBlocks({
           <BlockView key={`t-${blockIndex}`} block={block} />
         ))}
       </div>
+
+      {choiceCards.length > 0 ? (
+        <div className={`${trail.length > 0 || hasAnswer ? 'mt-3' : ''} space-y-2`}>
+          {choiceCards.map((card, index) => (
+            <ChoicePrompt
+              key={`choice-${index}-${card.question.slice(0, 24)}`}
+              question={card.question}
+              options={card.options}
+              interactive={Boolean(choicesInteractive && onChoice)}
+              onPick={(option) => onChoice?.(option)}
+            />
+          ))}
+        </div>
+      ) : null}
 
       {showFiles ? (
         <div className="mt-3">
@@ -384,7 +428,8 @@ function AssistantTurnBlocks({
               const lower = name.toLowerCase()
               if (lower.endsWith('.docx')) return 0
               if (lower.endsWith('.xlsx')) return 1
-              if (/\.(png|jpe?g|gif|webp)$/i.test(lower)) return 2
+              if (lower.endsWith('.pptx')) return 2
+              if (/\.(png|jpe?g|gif|webp)$/i.test(lower)) return 3
               if (lower.endsWith('.json')) return 9
               return 5
             }
@@ -637,16 +682,33 @@ function ChatPageInner() {
     }
   }
 
-  const onComposerSend = (text: string) => {
+  const onComposerSend = (
+    text: string,
+    tools: { webSearch: boolean; research: boolean; skill: string | null } = {
+      webSearch: true,
+      research: false,
+      skill: null,
+    },
+  ) => {
     const message = withAttachments(text)
+    const trimmed = message.trim()
+    // Chip already encoded into the message in Composer; don't double-prefix.
+    const body = tools.skill
+      ? trimmed.startsWith(`/${tools.skill}`)
+        ? trimmed
+        : trimmed
+          ? `/${tools.skill} ${trimmed}`
+          : `/${tools.skill}`
+      : trimmed
+    if (!body.trim()) return
     setPendingAttachments([])
     if (editingIndex !== null && editingTurn?.role === 'user') {
       const index = editingIndex
       setEditingIndex(null)
-      void editAndResend(index, message)
+      void editAndResend(index, body, tools)
       return
     }
-    send(message)
+    send(body, tools)
   }
 
   return (
@@ -855,7 +917,7 @@ function ChatPageInner() {
                               bg-paper-3 px-4 py-3 text-[14.5px] leading-relaxed text-ink"
                             dir="auto"
                           >
-                            {turn.text}
+                            <UserSlashText text={turn.text} />
                           </div>
                           {!busy && (
                             <button
@@ -876,6 +938,8 @@ function ChatPageInner() {
                         <AssistantTurnBlocks
                           blocks={turn.blocks}
                           turnComplete={!busy || index !== turns.length - 1}
+                          choicesInteractive={index === turns.length - 1}
+                          onChoice={(option) => onComposerSend(option)}
                         />
                         {busy &&
                           index === turns.length - 1 &&

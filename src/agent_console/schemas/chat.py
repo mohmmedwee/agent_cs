@@ -43,6 +43,10 @@ class ChatRequest(BaseModel):
     effort: Effort | None = None
     # Tools the user has set to "always allow" — skip HITL for these names.
     auto_approve_tools: list[str] = Field(default_factory=list)
+    # Composer toggles: steer tool/skill use for this turn.
+    web_search: bool = False
+    research: bool = False
+    skill: str | None = Field(default=None, max_length=64)
 
 
 class ToolApprovalRequest(BaseModel):

@@ -74,8 +74,16 @@ class SkillRepository:
                     # Without a description the model has no basis for choosing
                     # it, so an unlabelled skill is worse than no skill.
                     continue
-                found[name] = Skill(name=name, description=description, path=path)
+                found[name] = Skill(
+                    name=name,
+                    description=description,
+                    path=path,
+                    source="builtin",
+                )
         self._skills = found
+
+    def names(self) -> set[str]:
+        return set(self._skills)
 
     def list(self) -> list[Skill]:
         return sorted(self._skills.values(), key=lambda skill: skill.name)
@@ -95,6 +103,8 @@ class SkillRepository:
         if skill is None:
             available = ", ".join(self._skills) or "none"
             raise UnknownSkillError(f"no skill named {name!r}. Available: {available}")
+        if skill.path is None:
+            raise UnknownSkillError(f"no skill named {name!r}")
 
         _, body = _parse_skill_file(skill.path)
         if max_chars is None or len(body) <= max_chars:

@@ -9,6 +9,7 @@ const TOOL_KEYS: Record<string, string> = {
   read_uploaded_file: 'chat.toolReadFile',
   search_uploaded_files: 'chat.toolSearchFiles',
   list_uploaded_files: 'chat.toolListFiles',
+  ask_user: 'chat.toolAskUser',
   write_file: 'chat.toolWriteFile',
   convert_upload_to_docx: 'chat.toolConvertUpload',
   run_python: 'chat.toolRunPython',
