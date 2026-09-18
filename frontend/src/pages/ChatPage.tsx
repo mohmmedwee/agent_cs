@@ -9,7 +9,7 @@ import { Composer } from '@/components/chat/Composer'
 import {
   ArtifactPanel,
   DocumentFileCard,
-  fileIdFromWriteResult,
+  filesFromToolResult,
   writeFilePayload,
 } from '@/components/chat/DocumentPreview'
 import { Logo } from '@/components/Logo'
@@ -18,8 +18,10 @@ import { useChat } from '@/hooks/useChat'
 import { useConversation, useCreateConversation } from '@/hooks/useConversations'
 import { useLocalSetting } from '@/hooks/useLocalSetting'
 import { api } from '@/lib/api'
+import { resumeChatRunIfActive } from '@/lib/chatRunner'
 import { skillDisplayName, toolDisplayName } from '@/lib/activityLabels'
-import type { Block, Effort, StoredFile, StoredMessage, Turn } from '@/types'
+import type { Block, StoredFile, StoredMessage, Turn } from '@/types'
+import { normalizeEffort } from '@/types'
 
 /**
  * Stored messages come back as blocks. Turns written before blocks existed,
@@ -103,6 +105,7 @@ function activityLabel(
     if (block.name === 'web_search') return t('chat.searchedWeb')
     if (block.name === 'fetch_url') return t('chat.readPage')
     if (block.name === 'write_file') return t('chat.activityWroteFile')
+    if (block.name === 'run_python') return t('chat.activityRanPython')
     return toolDisplayName(block.name, t)
   }
   if (block.kind === 'error') return t('chat.activityError')
@@ -227,20 +230,42 @@ function AssistantTurnBlocks({
 
       {showFiles ? (
         <div className={hasAnswer ? 'mt-3 space-y-2.5' : 'space-y-2.5'}>
-          {files.map((block, blockIndex) => {
-            const fileId = fileIdFromWriteResult(block.result!)
-            if (!fileId) return null
-            const payload = writeFilePayload(block.args)
-            return (
+          {(() => {
+            const cards = files.flatMap((block) => {
+              const payload =
+                block.name === 'write_file' ? writeFilePayload(block.args) : null
+              return filesFromToolResult(block.result!).map((file) => ({
+                blockId: block.id,
+                name:
+                  payload?.name ||
+                  (file.name !== 'document' ? file.name : undefined) ||
+                  'document',
+                fileId: file.id,
+                content: payload?.content,
+              }))
+            })
+            const rank = (name: string) => {
+              const lower = name.toLowerCase()
+              if (lower.endsWith('.docx')) return 0
+              if (lower.endsWith('.xlsx')) return 1
+              if (/\.(png|jpe?g|gif|webp)$/i.test(lower)) return 2
+              if (lower.endsWith('.json')) return 9
+              return 5
+            }
+            const preferred =
+              [...cards].sort((a, b) => rank(a.name) - rank(b.name))[0]?.fileId ??
+              null
+            const canOpen = turnComplete || hasAnswer
+            return cards.map((card, index) => (
               <DocumentFileCard
-                key={`f-${block.id}-${blockIndex}`}
-                name={payload?.name || 'document'}
-                fileId={fileId}
-                content={payload?.content}
-                autoOpen={turnComplete || hasAnswer}
+                key={`f-${card.blockId}-${card.fileId}-${index}`}
+                name={card.name}
+                fileId={card.fileId}
+                content={card.content}
+                autoOpen={canOpen && card.fileId === preferred}
               />
-            )
-          })}
+            ))
+          })()}
         </div>
       ) : null}
 
@@ -253,19 +278,21 @@ function AssistantTurnBlocks({
   )
 }
 
-function pendingWriteApproval(turns: Turn[]) {
+function pendingToolApproval(turns: Turn[]) {
   for (let i = turns.length - 1; i >= 0; i -= 1) {
     const turn = turns[i]
     if (turn.role !== 'assistant') continue
     for (const block of turn.blocks) {
       if (
         block.kind === 'tool' &&
-        block.name === 'write_file' &&
+        (block.name === 'write_file' || block.name === 'run_python') &&
         block.awaitingApproval
       ) {
-        const payload = writeFilePayload(block.args)
+        const payload =
+          block.name === 'write_file' ? writeFilePayload(block.args) : null
         return {
           callId: block.id,
+          toolName: block.name,
           fileName: payload?.name || 'document',
           pending: Boolean(block.approvalPending),
         }
@@ -298,7 +325,8 @@ function ChatPageInner() {
   const { closeArtifact } = useArtifact()
 
   const [model, setModel] = useLocalSetting<string | null>('model', null)
-  const [effort, setEffort] = useLocalSetting<Effort>('effort', 'medium')
+  const [storedEffort, setEffort] = useLocalSetting<string>('effort', 'medium')
+  const effort = normalizeEffort(storedEffort)
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
@@ -335,6 +363,16 @@ function ChatPageInner() {
     if (!conversation || busy) return
     setTurns(toTurns(conversation.messages))
   }, [conversation?.id, conversation?.messages.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Full refresh wipes the in-memory runner; reattach if the server job is still live.
+  useEffect(() => {
+    if (!id || !conversation || busy) return
+    void resumeChatRunIfActive({
+      conversationId: id,
+      priorTurns: toTurns(conversation.messages),
+      title: conversation.title,
+    })
+  }, [id, conversation?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     closeArtifact()
@@ -385,7 +423,7 @@ function ChatPageInner() {
     editingIndex !== null && turns[editingIndex]?.role === 'user'
       ? turns[editingIndex]
       : null
-  const approval = useMemo(() => pendingWriteApproval(turns), [turns])
+  const approval = useMemo(() => pendingToolApproval(turns), [turns])
   const { data: health } = useQuery({
     queryKey: ['health'],
     queryFn: () => api.health(),
@@ -573,6 +611,7 @@ function ChatPageInner() {
             approval
               ? {
                   callId: approval.callId,
+                  toolName: approval.toolName,
                   fileName: approval.fileName,
                   pending: approval.pending,
                   onAllow: () => void resolveApproval(approval.callId, true),

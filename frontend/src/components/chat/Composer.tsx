@@ -11,6 +11,7 @@ import type { Effort, StoredFile } from '@/types'
 
 export interface ComposerApproval {
   callId: string
+  toolName: string
   fileName: string
   pending: boolean
   onAllow: () => void
@@ -30,7 +31,7 @@ interface Props {
   onRemoveAttachment?: (fileId: string) => void
   /** When set, composer is editing a past prompt instead of a new send. */
   editing?: { text: string; onCancel: () => void } | null
-  /** HITL: Allow / Deny for write_file, shown above the text box. */
+  /** HITL: Allow / Deny for gated tools, shown above the text box. */
   approval?: ComposerApproval | null
   /** Status + context meter footer inside the composer shell. */
   session?: SessionBarProps | null
@@ -176,7 +177,9 @@ export function Composer({
           >
             <p className="text-sm font-medium text-dark">{t('chat.approvalTitle')}</p>
             <p className="mt-0.5 text-xs text-secondary" dir="auto">
-              {t('chat.approvalWrite', { name: approval.fileName })}
+              {approval.toolName === 'run_python'
+                ? t('chat.approvalRunPython')
+                : t('chat.approvalWrite', { name: approval.fileName })}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button

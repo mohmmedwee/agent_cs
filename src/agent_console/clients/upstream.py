@@ -22,6 +22,23 @@ class UpstreamError(RuntimeError):
     """The endpoint was reachable but did not answer usefully."""
 
 
+def _upstream_effort(effort: str) -> str:
+    """Map app effort onto values Qwen3.8's chat template accepts.
+
+    Template only allows low / medium / xhigh. Legacy `high` and UI `minimal`
+    are rewritten so we never send a rejected value (which can 500 or silently
+    fall back to default xhigh).
+    """
+    key = effort.strip().lower().replace("x-high", "xhigh")
+    if key in {"high", "xhigh", "max"}:
+        return "xhigh"
+    if key == "minimal":
+        return "low"
+    if key in {"low", "medium"}:
+        return key
+    return "medium"
+
+
 @dataclass(slots=True)
 class CompletionChunk:
     """One unit of progress from a streamed completion.
@@ -148,6 +165,7 @@ class UpstreamClient:
         tools: list[ToolSchema],
         known_tool_names: set[str],
         effort: str | None = None,
+        max_tokens: int | None = None,
     ) -> AsyncIterator[CompletionChunk]:
         """Stream one completion, yielding text deltas then the final message."""
         body: dict[str, Any] = {
@@ -166,8 +184,8 @@ class UpstreamClient:
         # roughly two thirds, which on a fixed token budget is the difference
         # between getting an answer and spending it all on thinking.
         if effort:
-            body["reasoning_effort"] = effort
-        body["max_tokens"] = self._settings.max_completion_tokens
+            body["reasoning_effort"] = _upstream_effort(effort)
+        body["max_tokens"] = max_tokens or self._settings.max_completion_tokens
         text_parts: list[str] = []
         accumulator = ToolCallAccumulator()
 

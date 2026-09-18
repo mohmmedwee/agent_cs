@@ -7,11 +7,11 @@ after `max_steps` rounds.
 
 from collections.abc import AsyncIterator
 from datetime import datetime
+import logging
 from typing import Any
+from uuid import UUID
 
 import httpx
-
-from uuid import UUID
 
 from agent_console.clients.upstream import UpstreamClient, UpstreamError
 from agent_console.config import Settings
@@ -35,11 +35,45 @@ from agent_console.services.tools import ToolRegistry
 
 __all__ = ["AgentService"]
 
-# Loading a skill costs a round trip but produces no progress, so it is not
-# charged to the step budget. This bounds how many such rounds a model can take
-# before the loop gives up on it ever doing anything else.
-SKILL_TOOL = "read_skill"
-_SKILL_ALLOWANCE = 3
+logger = logging.getLogger(__name__)
+
+# Loading a skill / listing / searching files is setup, not progress toward
+# finishing the user's task — so those rounds do not spend the step budget.
+# Without this, a long docx edit burns the whole budget on exploration and
+# never reaches write_file.
+_SETUP_TOOLS = frozenset(
+    {
+        "read_skill",
+        "list_uploaded_files",
+        "search_uploaded_files",
+    }
+)
+# Extra loop iterations so free setup rounds still fit under the ceiling.
+_SETUP_ALLOWANCE = 12
+
+
+def _preview(text: str, limit: int = 160) -> str:
+    flat = " ".join((text or "").split())
+    if len(flat) <= limit:
+        return flat
+    return f"{flat[:limit]}…"
+
+
+def _downgrade_effort(effort: str | None) -> str:
+    """Next-lower reasoning effort after an empty completion.
+
+    Qwen3.8 only knows low / medium / xhigh. High effort often spends the
+    entire max_tokens on thinking; dropping effort on retry leaves budget
+    for the actual tool call.
+    """
+    order = ("xhigh", "medium", "low", "minimal")
+    current = (effort or "medium").lower().replace("x-high", "xhigh")
+    if current == "high":
+        current = "xhigh"
+    if current not in order:
+        return "low"
+    index = order.index(current)
+    return order[min(index + 1, len(order) - 1)]
 
 
 def _describe_upstream_failure(exc: BaseException) -> str:
@@ -51,6 +85,13 @@ def _describe_upstream_failure(exc: BaseException) -> str:
             "or wait and send the request again."
         )
     detail = str(exc).strip()
+    lowered = detail.lower()
+    if "upstream 500" in lowered or "internal server error" in lowered:
+        return (
+            "The model server returned an internal error (500). It may have "
+            "run out of memory or crashed mid-reply — reload the model in "
+            "LM Studio (or restart it), then send “continue”."
+        )
     return detail or f"{type(exc).__name__}: the model endpoint failed"
 
 
@@ -110,6 +151,7 @@ class AgentService:
         model: str | None = None,
         effort: str | None = None,
         conversation_id: str | None = None,
+        auto_approve_tools: set[str] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """Drive the loop, emitting typed events the UI renders by type.
 
@@ -121,6 +163,11 @@ class AgentService:
             {"role": "system", "content": await self._system_prompt()},
             *messages,
         ]
+        skip_approval = {
+            name
+            for name in (auto_approve_tools or set())
+            if name in self._settings.approval_required_tools
+        }
 
         try:
             chosen = model or await self._upstream.resolve_model()
@@ -130,23 +177,43 @@ class AgentService:
 
         max_steps = self._step_budget(effort)
         steps_used = 0
+        empty_retries = 0
+        # May drop on empty-reply recovery — high reasoning often burns the
+        # whole token budget and never emits a tool call.
+        active_effort = effort
+        logger.info(
+            "chat start model=%s effort=%s max_steps=%s conversation=%s",
+            chosen,
+            effort or "default",
+            max_steps,
+            conversation_id or "-",
+        )
 
-        # The ceiling is on tool rounds, but the extra iterations let a model
-        # load skills first without those reads eating the budget.
-        for _ in range(max_steps + _SKILL_ALLOWANCE):
+        # Ceiling is on charged tool rounds; setup tools (list/search/skills)
+        # get extra iterations so exploration does not block write_file.
+        for round_index in range(max_steps + _SETUP_ALLOWANCE):
             if steps_used >= max_steps:
                 break
 
             assistant_message: dict[str, Any] | None = None
             streamed_text: list[str] = []
+            saw_reasoning = False
             cut_runaway = False
+            logger.info(
+                "model call #%s model=%s tools=%s effort=%s",
+                round_index + 1,
+                chosen,
+                len(self._tools.schemas),
+                active_effort or "default",
+            )
             try:
                 chunks = self._upstream.stream_completion(
                     model=chosen,
                     messages=conversation,
                     tools=self._tools.schemas,
                     known_tool_names=self._tools.names,
-                    effort=effort,
+                    effort=active_effort,
+                    max_tokens=self._completion_budget(active_effort),
                 )
                 async for chunk in chunks:
                     if chunk.text is not None:
@@ -167,6 +234,7 @@ class AgentService:
                             break
                         yield TextDeltaEvent(text=chunk.text)
                     elif chunk.reasoning is not None:
+                        saw_reasoning = True
                         yield ReasoningDeltaEvent(text=chunk.reasoning)
                     elif chunk.tool_progress is not None:
                         yield ToolCallDeltaEvent(**chunk.tool_progress)
@@ -175,6 +243,7 @@ class AgentService:
                         if cut_runaway:
                             break
             except (httpx.HTTPError, UpstreamError) as exc:
+                logger.warning("model call failed model=%s: %s", chosen, exc)
                 yield ErrorEvent(message=_describe_upstream_failure(exc))
                 return
 
@@ -184,6 +253,7 @@ class AgentService:
 
             if cut_runaway:
                 conversation.append(assistant_message)
+                logger.info("chat done model=%s reason=runaway_cutoff", chosen)
                 yield DoneEvent(steps=steps_used + 1)
                 return
 
@@ -192,26 +262,102 @@ class AgentService:
             if not tool_calls:
                 # A reply with neither text nor tool calls is a failure wearing
                 # a success's clothes; saying so beats rendering a blank turn.
-                if not (assistant_message.get("content") or "").strip():
+                content = (assistant_message.get("content") or "").strip()
+                if not content:
+                    # Common with high reasoning_effort: thinking burns
+                    # max_tokens and the stream ends with no tool call.
+                    if empty_retries < 2:
+                        empty_retries += 1
+                        prev = active_effort
+                        active_effort = _downgrade_effort(active_effort)
+                        logger.warning(
+                            "empty reply model=%s reasoning=%s; "
+                            "retry %s effort %s→%s",
+                            chosen,
+                            saw_reasoning,
+                            empty_retries,
+                            prev or "default",
+                            active_effort or "default",
+                        )
+                        # Drop the blank assistant turn — models handle a
+                        # retry nudge better without a null-content message.
+                        conversation.pop()
+                        conversation.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Your last reply was empty (no text and no "
+                                    "tool call). Continue the task now: call "
+                                    "the tools you need (usually run_python or "
+                                    "write_file). Keep reasoning short and put "
+                                    "the full action in the tool call."
+                                ),
+                            }
+                        )
+                        continue
+                    logger.warning(
+                        "empty reply model=%s steps=%s reasoning=%s",
+                        chosen,
+                        steps_used,
+                        saw_reasoning,
+                    )
+                    hint = (
+                        " It spent the token budget on thinking and never "
+                        "emitted a tool call."
+                        if saw_reasoning
+                        else ""
+                    )
                     yield ErrorEvent(
                         message=(
-                            f"{chosen} returned an empty reply. The model may have "
-                            "failed to run — try another model in Settings."
+                            f"{chosen} returned an empty reply.{hint} "
+                            "Switch Effort to medium (or low), reload the model "
+                            "in LM Studio if needed, then send “continue”."
                         )
                     )
                     return
+                logger.info(
+                    "chat done model=%s steps=%s reply=%s",
+                    chosen,
+                    steps_used,
+                    _preview(content),
+                )
                 yield DoneEvent(steps=steps_used + 1)
                 return
 
             for call in tool_calls:
                 call_id, function = call["id"], call["function"]
                 name, raw_arguments = function["name"], function["arguments"]
+                logger.info(
+                    "tool call model=%s name=%s args=%s",
+                    chosen,
+                    name,
+                    _preview(raw_arguments, 200),
+                )
 
                 yield ToolCallEvent(id=call_id, name=name, arguments=raw_arguments)
+
+                # Incomplete gated calls: never ask Allow/Deny for a no-op.
+                # Empty run_python args previously paused HITL, then still failed
+                # with "missing code" and often provoked an LM Studio 500 next.
+                if name in self._settings.approval_required_tools:
+                    if arg_error := self._tools.argument_error(name, raw_arguments):
+                        logger.info(
+                            "tool incomplete-args name=%s preview=%s",
+                            name,
+                            _preview(arg_error),
+                        )
+                        yield ToolResultEvent(
+                            id=call_id, name=name, result=arg_error
+                        )
+                        conversation.append(
+                            build_tool_message(call_id, name, arg_error)
+                        )
+                        continue
 
                 if (
                     conversation_id
                     and name in self._settings.approval_required_tools
+                    and name not in skip_approval
                 ):
                     yield ToolApprovalEvent(
                         id=call_id, name=name, arguments=raw_arguments
@@ -226,21 +372,31 @@ class AgentService:
                             "Error: the user declined this action. "
                             "Do not retry the same write unless they ask."
                         )
+                        logger.info("tool denied name=%s", name)
                         yield ToolResultEvent(id=call_id, name=name, result=result)
                         conversation.append(
                             build_tool_message(call_id, name, result)
                         )
                         continue
+                elif name in skip_approval:
+                    logger.info("tool auto-approved name=%s", name)
 
                 result = await self._tools.invoke(name, raw_arguments)
+                logger.info(
+                    "tool result name=%s chars=%s preview=%s",
+                    name,
+                    len(result or ""),
+                    _preview(result),
+                )
                 yield ToolResultEvent(id=call_id, name=name, result=result)
 
                 conversation.append(build_tool_message(call_id, name, result))
 
-            # Reading a skill is setup, not progress toward the answer. Charging
-            # it to the budget spent half of a minimal-effort run on loading
-            # instructions the model then had no room left to act on.
-            if any(call["function"]["name"] != SKILL_TOOL for call in tool_calls):
+            # Exploration (skills / list / search) is free. Heavy work
+            # (read windows, python, write_file, web, …) spends the budget.
+            if any(
+                call["function"]["name"] not in _SETUP_TOOLS for call in tool_calls
+            ):
                 steps_used += 1
 
         async for event in self._wrap_up(conversation, chosen, effort, max_steps):
@@ -267,17 +423,19 @@ class AgentService:
                 "role": "user",
                 "content": (
                     "The tool budget for this turn is spent. Answer now using "
-                    "only what the tool results above already gave you. Be warm "
-                    "and conversational — not a status report. If a file was "
-                    "written, say it is ready in one short sentence and offer "
-                    "one next step — do not paste raw /api/files download URLs "
-                    "(the UI already shows a download card). If the task is "
-                    "unfinished, say briefly what is left and that raising "
-                    "Effort in Settings allows more steps."
+                    "only what the tool results above already gave you. If you "
+                    "still need to create or update a file, say clearly that "
+                    "you ran out of steps and ask the user to say \"continue\" "
+                    "so you can call write_file next — do not pretend the file "
+                    "was written. Be warm and conversational. If a file was "
+                    "already written, say it is ready in one short sentence and "
+                    "offer one next step — do not paste raw /api/files download "
+                    "URLs (the UI already shows a download card)."
                 ),
             }
         )
 
+        logger.info("wrap-up call model=%s (tool budget spent)", model)
         answered = False
         try:
             chunks = self._upstream.stream_completion(
@@ -286,6 +444,7 @@ class AgentService:
                 tools=[],
                 known_tool_names=set(),
                 effort=effort,
+                max_tokens=self._completion_budget(effort),
             )
             async for chunk in chunks:
                 if chunk.text is not None:
@@ -294,24 +453,51 @@ class AgentService:
                 elif chunk.reasoning is not None:
                     yield ReasoningDeltaEvent(text=chunk.reasoning)
         except (httpx.HTTPError, UpstreamError) as exc:
+            logger.warning("wrap-up failed model=%s: %s", model, exc)
             yield ErrorEvent(message=_describe_upstream_failure(exc))
             return
 
         if not answered:
             yield ErrorEvent(
                 message=(
-                    f"Stopped after {max_steps} tool steps without an answer. "
-                    "Raise Effort in Settings to allow more."
+                    f"Stopped after {max_steps} tool steps without finishing. "
+                    "Send a follow-up like “continue and write the file”."
                 )
             )
             return
+        logger.info("chat done model=%s steps=%s reason=wrap_up", model, max_steps)
         yield DoneEvent(steps=max_steps)
 
-    def _step_budget(self, effort: str | None) -> int:
-        """How many tool rounds this effort level is allowed.
+    def _completion_budget(self, effort: str | None) -> int:
+        """Token cap for one completion; high effort needs room for tools.
 
-        Backs the effort control with something that definitely works,
-        independent of what the endpoint does with `reasoning_effort`.
+        With reasoning_effort=high, thinking can consume the whole budget and
+        the stream ends with an empty reply (no text, no tool_calls). Give
+        high/medium more headroom so run_python / write_file still fit.
+        """
+        base = self._settings.max_completion_tokens
+        return {
+            "minimal": min(base, 4_096),
+            "low": min(base, 6_144),
+            "medium": max(base, 8_192),
+            "xhigh": max(base, 16_384),
+            "high": max(base, 16_384),  # legacy alias
+        }.get(effort or "", base)
+
+    def _step_budget(self, effort: str | None) -> int:
+        """How many charged tool rounds this effort level is allowed.
+
+        Exploration tools do not spend this budget. xhigh uses the full
+        `max_steps` ceiling so long document edits can finish on their own.
         """
         ceiling = self._settings.max_steps
-        return min(ceiling, {"minimal": 2, "low": 4, "medium": 8}.get(effort or "", ceiling))
+        return min(
+            ceiling,
+            {
+                "minimal": 4,
+                "low": 8,
+                "medium": 16,
+                "xhigh": ceiling,
+                "high": ceiling,  # legacy alias
+            }.get(effort or "", ceiling),
+        )

@@ -206,6 +206,25 @@
    rule is dropped, so list items end up flush against each other. */
 .prose-agent li + li { @apply mt-1; }
 .prose-agent a { @apply text-primary underline underline-offset-2; }
+.prose-agent img.preview-embed {
+  @apply my-4 max-h-[28rem] w-full rounded-xl object-contain ring-1 ring-secondary-200;
+}
+
+/* docx-preview lives in Shadow DOM — keep only the host sizing here */
+.docx-native-host {
+  @apply w-full min-w-0;
+}
+
+.xlsx-preview-table th,
+.xlsx-preview-table td {
+  @apply border border-secondary-200 px-3 py-2 text-start align-top;
+}
+.xlsx-preview-head th {
+  @apply bg-secondary-100 font-semibold text-dark;
+}
+.xlsx-preview-table tr:nth-child(even):not(.xlsx-preview-head) td {
+  @apply bg-secondary-25;
+}
 .prose-agent code {
   @apply rounded-md bg-secondary-100 px-1.5 py-0.5 font-mono text-[0.85em];
 }

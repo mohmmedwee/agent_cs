@@ -50,6 +50,15 @@ class Conversation(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(200), default="New chat")
+    # When set, this chat was forked from another. All siblings share the root
+    # as parent_id so the branch switcher stays a flat family list.
+    parent_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # How many leading messages were copied from the parent at fork time.
+    branched_at_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Rolling summary of older turns so long chats fit the model window.
     # `summarized_count` is how many leading transcript messages are covered.
     context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)

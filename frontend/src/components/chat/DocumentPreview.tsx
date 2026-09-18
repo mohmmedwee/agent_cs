@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useArtifact } from '@/components/chat/ArtifactContext'
+import { DocxNativePreview } from '@/components/chat/DocxNativePreview'
 import { Markdown } from '@/components/chat/Markdown'
+import { XlsxNativePreview } from '@/components/chat/XlsxNativePreview'
 import {
   CloseIcon,
   DownloadIcon,
@@ -12,11 +14,28 @@ import {
 } from '@/components/Icons'
 import { api } from '@/lib/api'
 
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'])
+
+export function isImageFileName(name: string): boolean {
+  const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
+  return IMAGE_EXTS.has(ext)
+}
+
+function isDocxFileName(name: string): boolean {
+  return name.toLowerCase().endsWith('.docx')
+}
+
+function isXlsxFileName(name: string): boolean {
+  return name.toLowerCase().endsWith('.xlsx')
+}
+
 function extensionLabel(name: string): string {
   const ext = name.includes('.') ? name.split('.').pop()!.toUpperCase() : ''
   if (ext === 'DOCX') return 'DOCX'
+  if (ext === 'XLSX') return 'XLSX'
   if (ext === 'MD') return 'Markdown'
   if (ext === 'TXT') return 'Text'
+  if (IMAGE_EXTS.has(ext.toLowerCase())) return ext
   return ext || 'File'
 }
 
@@ -39,6 +58,8 @@ export function DocumentFileCard({
   const { artifact, openArtifact } = useArtifact()
   const active = artifact?.fileId === fileId
   const kind = extensionLabel(name)
+  const isImage = isImageFileName(name)
+  const thumbUrl = api.files.downloadUrl(fileId)
 
   useEffect(() => {
     if (!autoOpen) return
@@ -59,12 +80,20 @@ export function DocumentFileCard({
         onClick={() => openArtifact({ fileId, name, content })}
         className="flex min-w-0 flex-1 items-center gap-3 text-start"
       >
-        <div
-          className="flex size-10 shrink-0 items-center justify-center rounded-xl
-            bg-primary-50 text-primary"
-        >
-          <FileIcon width={20} height={20} />
-        </div>
+        {isImage ? (
+          <img
+            src={thumbUrl}
+            alt=""
+            className="size-10 shrink-0 rounded-xl object-cover ring-1 ring-secondary-200"
+          />
+        ) : (
+          <div
+            className="flex size-10 shrink-0 items-center justify-center rounded-xl
+              bg-primary-50 text-primary"
+          >
+            <FileIcon width={20} height={20} />
+          </div>
+        )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-dark" dir="auto">
             {name.replace(/\.[^.]+$/, '') || name}
@@ -96,8 +125,23 @@ export function ArtifactPanel() {
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState(false)
 
+  const isImage = artifact ? isImageFileName(artifact.name) : false
+  const isDocx = artifact ? isDocxFileName(artifact.name) : false
+  const isXlsx = artifact ? isXlsxFileName(artifact.name) : false
+
   useEffect(() => {
     if (!artifact) {
+      setBody('')
+      setError('')
+      setLoading(false)
+      return
+    }
+    // Images / Office natives load their own bytes.
+    if (
+      isImageFileName(artifact.name) ||
+      isDocxFileName(artifact.name) ||
+      isXlsxFileName(artifact.name)
+    ) {
       setBody('')
       setError('')
       setLoading(false)
@@ -186,23 +230,38 @@ export function ArtifactPanel() {
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-canvas p-4 sm:p-6">
-        <div
-          className="mx-auto min-h-full max-w-2xl rounded-sm bg-surface px-8 py-10
-            shadow-md ring-1 ring-secondary-200 sm:px-12 sm:py-14"
-        >
-          {loading && (
-            <div className="flex items-center gap-2 text-sm text-secondary">
-              <SpinnerIcon width={16} height={16} />
-              {t('common.loading')}
-            </div>
-          )}
-          {error && (
-            <p className="text-sm text-error" role="alert">
-              {error}
-            </p>
-          )}
-          {!loading && !error && body && <Markdown text={body} />}
-        </div>
+        {isImage ? (
+          <div className="flex min-h-full items-center justify-center">
+            <img
+              src={api.files.downloadUrl(artifact.fileId)}
+              alt={artifact.name}
+              className="max-h-[min(70vh,40rem)] max-w-full rounded-xl object-contain
+                shadow-md ring-1 ring-secondary-200"
+            />
+          </div>
+        ) : isDocx ? (
+          <DocxNativePreview fileId={artifact.fileId} />
+        ) : isXlsx ? (
+          <XlsxNativePreview fileId={artifact.fileId} />
+        ) : (
+          <div
+            className="mx-auto min-h-full max-w-2xl rounded-sm bg-surface px-8 py-10
+              shadow-md ring-1 ring-secondary-200 sm:px-12 sm:py-14"
+          >
+            {loading && (
+              <div className="flex items-center gap-2 text-sm text-secondary">
+                <SpinnerIcon width={16} height={16} />
+                {t('common.loading')}
+              </div>
+            )}
+            {error && (
+              <p className="text-sm text-error" role="alert">
+                {error}
+              </p>
+            )}
+            {!loading && !error && body && <Markdown text={body} />}
+          </div>
+        )}
       </div>
     </aside>
   )
@@ -212,6 +271,28 @@ export function ArtifactPanel() {
 export function fileIdFromWriteResult(result: string): string | null {
   const match = result.match(/\/api\/files\/([0-9a-f-]{36})\/download/i)
   return match?.[1] ?? null
+}
+
+/** All downloadable files mentioned in a tool result (write_file or run_python). */
+export function filesFromToolResult(
+  result: string,
+): { id: string; name: string }[] {
+  const found: { id: string; name: string }[] = []
+  const seen = new Set<string>()
+  const lineRe =
+    /(?:^|\n)\s*[-*]?\s*(.+?)\s+\(\d+\s+bytes\)\s+[—\-]\s+\/api\/files\/([0-9a-f-]{36})\/download/gi
+  for (const match of result.matchAll(lineRe)) {
+    const name = match[1].trim()
+    const id = match[2]
+    if (seen.has(id)) continue
+    seen.add(id)
+    found.push({ id, name: name || 'document' })
+  }
+  if (found.length === 0) {
+    const id = fileIdFromWriteResult(result)
+    if (id) found.push({ id, name: 'document' })
+  }
+  return found
 }
 
 export function writeFilePayload(args: string): { name: string; content: string } | null {

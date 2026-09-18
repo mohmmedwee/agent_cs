@@ -6,7 +6,7 @@ import { CheckIcon, ChevronIcon } from '@/components/Icons'
 import { api } from '@/lib/api'
 import type { Effort } from '@/types'
 
-const EFFORTS: Effort[] = ['minimal', 'low', 'medium', 'high']
+const EFFORTS: Effort[] = ['minimal', 'low', 'medium', 'xhigh']
 
 interface Props {
   model: string | null
@@ -21,10 +21,12 @@ function shortModelName(id: string): string {
 }
 
 function effortLabelKey(level: Effort): string {
+  if (level === 'xhigh') return 'settings.effortXhigh'
   return `settings.effort${level.charAt(0).toUpperCase()}${level.slice(1)}`
 }
 
 function effortHelpKey(level: Effort): string {
+  if (level === 'xhigh') return 'settings.effortXhighHelp'
   return `settings.effort${level.charAt(0).toUpperCase()}${level.slice(1)}Help`
 }
 

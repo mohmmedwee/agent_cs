@@ -74,7 +74,7 @@ async def rewind_conversation(
     user: CurrentUserDep,
     repository: ConversationRepositoryDep,
 ) -> ConversationDetail:
-    """Delete from message index `keep` onward — used when editing a prompt."""
+    """Drop messages from `keep` onward so the user can edit and regenerate."""
     try:
         row = await repository.truncate_from(user.id, conversation_id, payload.keep)
     except UnknownConversationError as exc:

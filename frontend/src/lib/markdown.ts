@@ -109,6 +109,12 @@ export function renderMarkdown(src: string): string {
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|\W)\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    // Images: same-origin API paths only (docx media + file downloads).
+    .replace(
+      /!\[([^\]]*)\]\((\/api\/files\/[^)\s]+)\)/g,
+      (_match, alt: string, href: string) =>
+        `<img src="${href}" alt="${alt}" class="preview-embed" loading="lazy" />`,
+    )
     // Absolute http(s) or a same-origin path — the download links the agent
     // hands back are relative, and anything else (javascript:, data:) is left
     // as plain text on purpose. The href is already escaped, so it cannot

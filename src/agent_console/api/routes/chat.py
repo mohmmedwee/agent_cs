@@ -4,35 +4,40 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterable
+from pathlib import Path
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.sse import EventSourceResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from agent_console.api.dependencies import (
-    AgentServiceDep,
     ApprovalBrokerDep,
     CurrentUserDep,
     SettingsDep,
     UpstreamClientDep,
 )
+from agent_console.clients.search import PageFetcher
 from agent_console.clients.upstream import UpstreamError
 from agent_console.repositories.conversations import (
     ConversationRepository,
     UnknownConversationError,
 )
+from agent_console.repositories.files import FileRepository
+from agent_console.repositories.memory import MemoryRepository
 from agent_console.schemas.chat import (
     ChatRequest,
     ModelInfo,
     ModelListResponse,
     ToolApprovalRequest,
 )
+from agent_console.services.agent import AgentService
 from agent_console.services.approvals import ApprovalBroker
 from agent_console.services.auto_title import maybe_refine_title
 from agent_console.services.chat_jobs import ChatJobBroker
 from agent_console.services.context_compact import prepare_model_messages
+from agent_console.services.tools import ToolContext, build_registry
 
 __all__ = ["router"]
 
@@ -40,9 +45,20 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+
 
 class StopChatRequest(BaseModel):
     conversation_id: UUID
+
+
+class WatchChatRequest(BaseModel):
+    conversation_id: UUID
+
+
+def _upload_dir(settings) -> Path:
+    path = Path(settings.upload_dir)
+    return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 @router.post("/chat", response_model=None)
@@ -50,19 +66,19 @@ async def chat(
     request: ChatRequest,
     http_request: Request,
     user: CurrentUserDep,
-    agent: AgentServiceDep,
     settings: SettingsDep,
     upstream: UpstreamClientDep,
 ) -> EventSourceResponse:
     """Run the agent loop, streaming typed events as they happen.
 
-    The producer runs as a background task keyed by conversation. If the client
-    leaves the page (or the SSE consumer is cancelled), the agent keeps going
-    and the turn is still persisted. Explicit Stop cancels that job.
+    The producer owns its own DB session and keeps running if the client
+    disconnects (refresh / navigate away). Only POST /chat/stop cancels it.
     """
     factory = http_request.app.state.session_factory
     jobs: ChatJobBroker = http_request.app.state.chat_jobs
+    approvals: ApprovalBroker = http_request.app.state.approvals
     user_id = user.id
+    state = http_request.app.state
 
     async with factory() as session:
         conversations = ConversationRepository(session)
@@ -92,47 +108,87 @@ async def chat(
     blocks: list[dict] = []
     text_parts: list[str] = []
     conversation_key = str(request.conversation_id)
-    approvals: ApprovalBroker = http_request.app.state.approvals
-    event_queue: asyncio.Queue[dict | None] = asyncio.Queue()
     cancel = asyncio.Event()
+    upload_dir = _upload_dir(settings)
 
     async def produce() -> None:
+        # Own session for the whole run — must outlive the HTTP request that
+        # spawned us, otherwise a page refresh closes the request session and
+        # kills tool calls mid-generation.
         try:
-            async for event in agent.run(
-                messages,
-                model=request.model,
-                effort=request.effort,
-                conversation_id=conversation_key,
-            ):
-                if cancel.is_set():
-                    break
-                payload = event.model_dump()
-                _collect(payload, blocks, text_parts)
-                await event_queue.put(payload)
-        except asyncio.CancelledError:
-            logger.info("chat job cancelled for %s", conversation_key)
-            raise
-        except Exception as exc:  # noqa: BLE001 — surface to the UI stream
-            logger.exception("chat job failed for %s", conversation_key)
-            error_payload = {"type": "error", "message": str(exc)}
-            _collect(error_payload, blocks, text_parts)
-            await event_queue.put(error_payload)
-        finally:
-            approvals.cancel_conversation(conversation_key)
-            try:
-                async with factory() as session:
-                    await ConversationRepository(session).append(
-                        user_id,
-                        request.conversation_id,
-                        role="assistant",
-                        content="".join(text_parts),
-                        blocks=blocks or None,
-                    )
-                    await session.commit()
-            except Exception:
-                logger.exception(
-                    "failed to persist assistant turn for %s", request.conversation_id
+            async with factory() as session:
+                files = FileRepository(
+                    session, upload_dir, settings.max_upload_bytes
                 )
+                memories = MemoryRepository(session)
+                tools = build_registry(
+                    ToolContext(
+                        settings=settings,
+                        files=files,
+                        memories=memories,
+                        skills=state.skill_repository,
+                        search=state.search_backend,
+                        pages=PageFetcher(
+                            http=state.http_client,
+                            timeout=settings.fetch_timeout,
+                            max_chars=settings.max_page_chars,
+                        ),
+                        cache=state.cache,
+                        user_id=user_id,
+                        upstream=upstream,
+                    )
+                )
+                agent = AgentService(
+                    upstream=upstream,
+                    tools=tools,
+                    settings=settings,
+                    skills=state.skill_repository,
+                    approvals=approvals,
+                    memories=memories,
+                    user_id=user_id,
+                )
+                try:
+                    async for event in agent.run(
+                        messages,
+                        model=request.model,
+                        effort=request.effort,
+                        conversation_id=conversation_key,
+                        auto_approve_tools=set(request.auto_approve_tools),
+                    ):
+                        if cancel.is_set():
+                            break
+                        payload = event.model_dump()
+                        _collect(payload, blocks, text_parts)
+                        jobs.publish(conversation_key, payload)
+                except asyncio.CancelledError:
+                    logger.info("chat job cancelled for %s", conversation_key)
+                    raise
+                except Exception as exc:  # noqa: BLE001 — surface to the UI stream
+                    logger.exception("chat job failed for %s", conversation_key)
+                    error_payload = {"type": "error", "message": str(exc)}
+                    _collect(error_payload, blocks, text_parts)
+                    jobs.publish(conversation_key, error_payload)
+                finally:
+                    approvals.cancel_conversation(conversation_key)
+                    try:
+                        await ConversationRepository(session).append(
+                            user_id,
+                            request.conversation_id,
+                            role="assistant",
+                            content="".join(text_parts),
+                            blocks=blocks or None,
+                        )
+                        await session.commit()
+                    except Exception:
+                        logger.exception(
+                            "failed to persist assistant turn for %s",
+                            request.conversation_id,
+                        )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("chat producer crashed for %s", conversation_key)
+        finally:
             try:
                 await maybe_refine_title(
                     factory=factory,
@@ -145,32 +201,49 @@ async def chat(
                 logger.exception(
                     "auto-title failed for %s", request.conversation_id
                 )
-            await event_queue.put(None)
+            jobs.publish(conversation_key, None)
 
     jobs.spawn(conversation_key, produce(), cancel)
 
-    async def stream() -> AsyncIterable[str]:
-        try:
-            while True:
-                payload = await event_queue.get()
-                if payload is None:
-                    break
-                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        except asyncio.CancelledError:
-            # Client navigated away or closed the tab — producer keeps running.
-            logger.info(
-                "client left stream for %s; background job continues",
-                conversation_key,
-            )
-            return
+    return _sse_from_job(jobs, conversation_key)
 
-    return EventSourceResponse(
-        stream(),
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+
+@router.post("/chat/watch", response_model=None)
+async def watch_chat(
+    body: WatchChatRequest,
+    http_request: Request,
+    user: CurrentUserDep,
+) -> EventSourceResponse:
+    """Reattach to an in-flight run after refresh or navigate-back."""
+    factory = http_request.app.state.session_factory
+    jobs: ChatJobBroker = http_request.app.state.chat_jobs
+    async with factory() as session:
+        try:
+            await ConversationRepository(session).get(user.id, body.conversation_id)
+        except UnknownConversationError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+    key = str(body.conversation_id)
+    if not jobs.is_active(key):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no active run for this chat")
+    return _sse_from_job(jobs, key)
+
+
+@router.get("/chat/active/{conversation_id}")
+async def chat_active(
+    conversation_id: UUID,
+    http_request: Request,
+    user: CurrentUserDep,
+) -> dict[str, bool]:
+    """Whether a background generation is still running for this chat."""
+    factory = http_request.app.state.session_factory
+    jobs: ChatJobBroker = http_request.app.state.chat_jobs
+    async with factory() as session:
+        try:
+            await ConversationRepository(session).get(user.id, conversation_id)
+        except UnknownConversationError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return {"active": jobs.is_active(str(conversation_id))}
 
 
 @router.post("/chat/stop", status_code=status.HTTP_204_NO_CONTENT)
@@ -215,6 +288,45 @@ async def approve_tool(
             status.HTTP_409_CONFLICT,
             "No pending approval for this tool call (expired or already decided).",
         )
+
+
+def _sse_from_job(jobs: ChatJobBroker, conversation_key: str) -> EventSourceResponse:
+    attached = jobs.subscribe(conversation_key)
+    if attached is None:
+
+        async def empty() -> AsyncIterable[str]:
+            if False:  # pragma: no cover
+                yield ""
+
+        return EventSourceResponse(empty())
+
+    queue, replay = attached
+
+    async def stream() -> AsyncIterable[str]:
+        try:
+            for payload in replay:
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            while True:
+                payload = await queue.get()
+                if payload is None:
+                    break
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            logger.info(
+                "client left stream for %s; background job continues",
+                conversation_key,
+            )
+            return
+        finally:
+            jobs.unsubscribe(conversation_key, queue)
+
+    return EventSourceResponse(
+        stream(),
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _collect(event: dict, blocks: list[dict], text_parts: list[str]) -> None:

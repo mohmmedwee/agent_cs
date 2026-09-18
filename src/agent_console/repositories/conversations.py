@@ -7,7 +7,7 @@ rather than in the routes so a new endpoint cannot forget to check it.
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -92,6 +92,7 @@ class ConversationRepository:
         """Drop messages from `keep` onward so the user can edit and regenerate.
 
         `keep` is a count of leading messages to retain (0 = clear the thread).
+        Prefer in-place truncate for edit-and-resend (no conversation branches).
         """
         conversation = await self.get(user_id, conversation_id)
         if keep < 0:
@@ -109,6 +110,90 @@ class ConversationRepository:
         await self._session.flush()
         # Reload so callers see the trimmed message list.
         return await self.get(user_id, conversation_id)
+
+    async def _root_id(self, user_id: UUID, conversation_id: UUID) -> UUID:
+        """Walk parent_id until the family root (null parent)."""
+        current = await self.get(user_id, conversation_id)
+        seen: set[UUID] = set()
+        while current.parent_id is not None and current.parent_id not in seen:
+            seen.add(current.id)
+            parent = await self._session.get(Conversation, current.parent_id)
+            if parent is None or parent.user_id != user_id:
+                break
+            current = parent
+        return current.id
+
+    async def fork_from(
+        self, user_id: UUID, conversation_id: UUID, keep: int
+    ) -> Conversation:
+        """Copy the first `keep` messages into a new conversation branch.
+
+        The source chat is left intact. New row points at the family root via
+        `parent_id` so siblings stay easy to list.
+        """
+        source = await self.get(user_id, conversation_id)
+        if keep < 0:
+            keep = 0
+        keep = min(keep, len(source.messages))
+        root_id = await self._root_id(user_id, conversation_id)
+
+        base_title = source.title.strip() or "New chat"
+        branch_title = base_title
+        if not branch_title.endswith("(branch)"):
+            branch_title = f"{base_title} (branch)"
+        branch_title = branch_title[:200]
+
+        fork = Conversation(
+            user_id=user_id,
+            title=branch_title,
+            parent_id=root_id,
+            branched_at_position=keep,
+        )
+        # Keep summary only if it still covers a prefix inside the kept window.
+        if (
+            source.context_summary
+            and int(source.summarized_count or 0) > 0
+            and int(source.summarized_count or 0) <= keep
+        ):
+            fork.context_summary = source.context_summary
+            fork.summarized_count = int(source.summarized_count or 0)
+        else:
+            fork.context_summary = None
+            fork.summarized_count = 0
+
+        self._session.add(fork)
+        await self._session.flush()
+
+        for message in source.messages:
+            if message.position >= keep:
+                break
+            self._session.add(
+                Message(
+                    conversation_id=fork.id,
+                    position=message.position,
+                    role=message.role,
+                    content=message.content,
+                    blocks=message.blocks,
+                )
+            )
+
+        await self._session.flush()
+        return await self.get(user_id, fork.id)
+
+    async def list_family(
+        self, user_id: UUID, conversation_id: UUID
+    ) -> list[Conversation]:
+        """Root + every branch that shares that root."""
+        root_id = await self._root_id(user_id, conversation_id)
+        result = await self._session.execute(
+            select(Conversation)
+            .where(
+                Conversation.user_id == user_id,
+                or_(Conversation.id == root_id, Conversation.parent_id == root_id),
+            )
+            .order_by(Conversation.created_at.asc())
+        )
+        return list(result.scalars())
 
     async def append(
         self,

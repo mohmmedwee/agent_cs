@@ -1,9 +1,9 @@
 """Request and response schemas for the chat endpoint."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 __all__ = [
     "ChatRequest",
@@ -13,9 +13,21 @@ __all__ = [
     "ToolApprovalRequest",
 ]
 
-# Maps onto the upstream `reasoning_effort` parameter, which measurably shortens
-# this model's thinking: "minimal" cut it by about two thirds against baseline.
-Effort = Literal["minimal", "low", "medium", "high"]
+# Qwen3.8 accepts only low / medium / xhigh (not "high"). "minimal" is our
+# app-level "instant" preset: low thinking + a short tool-step budget.
+_EffortValue = Literal["minimal", "low", "medium", "xhigh"]
+
+
+def _coerce_effort(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    key = value.strip().lower().replace("x-high", "xhigh")
+    if key == "high":
+        return "xhigh"
+    return key
+
+
+Effort = Annotated[_EffortValue, BeforeValidator(_coerce_effort)]
 
 
 class ChatRequest(BaseModel):
@@ -29,6 +41,8 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     model: str | None = None
     effort: Effort | None = None
+    # Tools the user has set to "always allow" — skip HITL for these names.
+    auto_approve_tools: list[str] = Field(default_factory=list)
 
 
 class ToolApprovalRequest(BaseModel):

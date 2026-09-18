@@ -6,9 +6,9 @@ import { useLocalSetting } from '@/hooks/useLocalSetting'
 import { useTheme } from '@/hooks/useTheme'
 import { LOCALES, type Locale } from '@/i18n'
 import { api } from '@/lib/api'
-import type { Effort } from '@/types'
+import { normalizeEffort, type Effort } from '@/types'
 
-const EFFORTS: Effort[] = ['minimal', 'low', 'medium', 'high']
+const EFFORTS: Effort[] = ['minimal', 'low', 'medium', 'xhigh']
 
 function Section({
   title,
@@ -31,7 +31,8 @@ function Section({
 export function SettingsPage() {
   const { t, i18n } = useTranslation()
   const [model, setModel] = useLocalSetting<string | null>('model', null)
-  const [effort, setEffort] = useLocalSetting<Effort>('effort', 'medium')
+  const [storedEffort, setEffort] = useLocalSetting<string>('effort', 'medium')
+  const effort = normalizeEffort(storedEffort)
   const { theme, setTheme } = useTheme()
 
   const { data } = useQuery({ queryKey: ['models'], queryFn: api.models })
@@ -87,12 +88,16 @@ export function SettingsPage() {
                   <span>
                     <span className="block text-sm font-medium text-dark">
                       {t(
-                        `settings.effort${level.charAt(0).toUpperCase()}${level.slice(1)}`,
+                        level === 'xhigh'
+                          ? 'settings.effortXhigh'
+                          : `settings.effort${level.charAt(0).toUpperCase()}${level.slice(1)}`,
                       )}
                     </span>
                     <span className="mt-0.5 block text-xs text-secondary">
                       {t(
-                        `settings.effort${level.charAt(0).toUpperCase()}${level.slice(1)}Help`,
+                        level === 'xhigh'
+                          ? 'settings.effortXhighHelp'
+                          : `settings.effort${level.charAt(0).toUpperCase()}${level.slice(1)}Help`,
                       )}
                     </span>
                   </span>

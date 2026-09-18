@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { NavLink, useNavigate, useParams } from 'react-router-dom'
 
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import {
   BrainIcon,
   ChatIcon,
@@ -33,16 +35,23 @@ export function Sidebar({ collapsed, onToggle }: Props) {
   const { data: conversations = [] } = useConversations()
   const create = useCreateConversation()
   const remove = useDeleteConversation()
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
 
   const startChat = async () => {
     const created = await create.mutateAsync(undefined)
     navigate(`/chat/${created.id}`)
   }
 
-  const deleteChat = async (id: string) => {
-    if (!window.confirm(t('chat.deleteConfirm'))) return
-    await remove.mutateAsync(id)
-    if (id === activeId) navigate('/chat')
+  const confirmDelete = async () => {
+    if (!pendingDeleteId) return
+    const id = pendingDeleteId
+    try {
+      await remove.mutateAsync(id)
+      setPendingDeleteId(null)
+      if (id === activeId) navigate('/chat')
+    } catch {
+      // Keep the dialog open so the user can retry or cancel.
+    }
   }
 
   const links = [
@@ -117,7 +126,7 @@ export function Sidebar({ collapsed, onToggle }: Props) {
                 </NavLink>
                 <button
                   type="button"
-                  onClick={() => void deleteChat(conversation.id)}
+                  onClick={() => setPendingDeleteId(conversation.id)}
                   aria-label={t('chat.deleteChat')}
                   className="absolute end-1.5 top-1/2 hidden -translate-y-1/2 rounded-lg p-1.5
                     text-secondary-400 transition hover:bg-error-50 hover:text-error
@@ -138,8 +147,7 @@ export function Sidebar({ collapsed, onToggle }: Props) {
         aria-label={collapsed ? t('nav.expand') : t('nav.collapse')}
       >
         <ChevronIcon
-          width={18}
-          height={18}
+          width={18} height={18}
           // The chevron points outward in LTR and inward in RTL, so it always
           // indicates the direction the panel will actually move.
           className={`transition-transform ${
@@ -147,6 +155,19 @@ export function Sidebar({ collapsed, onToggle }: Props) {
           }`}
         />
       </button>
+
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        title={t('chat.deleteTitle')}
+        message={t('chat.deleteConfirm')}
+        confirmLabel={t('chat.deleteChat')}
+        danger
+        busy={remove.isPending}
+        onCancel={() => {
+          if (!remove.isPending) setPendingDeleteId(null)
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
     </aside>
   )
 }

@@ -10,6 +10,7 @@ const TOOL_KEYS: Record<string, string> = {
   search_uploaded_files: 'chat.toolSearchFiles',
   list_uploaded_files: 'chat.toolListFiles',
   write_file: 'chat.toolWriteFile',
+  run_python: 'chat.toolRunPython',
   view_image: 'chat.toolViewImage',
   calculate: 'chat.toolCalculate',
   current_time: 'chat.toolCurrentTime',
@@ -22,6 +23,7 @@ const TOOL_KEYS: Record<string, string> = {
 const SKILL_KEYS: Record<string, string> = {
   'planning-with-intention': 'chat.skillPlanning',
   'working-with-documents': 'chat.skillDocuments',
+  'file-reading': 'chat.skillFileReading',
   'replying-bilingually': 'chat.skillBilingual',
   'diagnosing-problems': 'chat.skillDiagnosing',
   'writing-deliverables': 'chat.skillDeliverables',

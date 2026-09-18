@@ -91,6 +91,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    # Uvicorn may have already configured root logging; force our format so
+    # agent steps (model / tools) show up in the same console as access logs.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+    logging.getLogger("agent_console").setLevel(logging.INFO)
+
     app = FastAPI(title="Agent console", lifespan=lifespan)
     app.state.settings = settings or get_settings()
 

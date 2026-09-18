@@ -9,11 +9,12 @@ import { WebSearchResults } from '@/components/chat/WebSearchResults'
 import { skillDisplayName, toolDisplayName } from '@/lib/activityLabels'
 import type { Block } from '@/types'
 
-/** Successful write_file tools — shown after the answer, not mid-stream. */
+/** Successful write_file / run_python tools that produced downloadable files. */
 export function isWrittenFileBlock(
   block: Block,
 ): block is Extract<Block, { kind: 'tool' }> & { result: string } {
-  if (block.kind !== 'tool' || block.name !== 'write_file' || block.failed) return false
+  if (block.kind !== 'tool' || block.failed) return false
+  if (block.name !== 'write_file' && block.name !== 'run_python') return false
   if (block.result === undefined) return false
   return Boolean(fileIdFromWriteResult(block.result))
 }
@@ -128,7 +129,7 @@ function ToolBlock({
   }
 
   const written =
-    name === 'write_file' &&
+    (name === 'write_file' || name === 'run_python') &&
     !pending &&
     !failed &&
     result !== undefined &&
@@ -165,7 +166,7 @@ function ToolBlock({
   }
 
   // Allow / Deny lives in the composer; chat only shows a waiting hint.
-  if (name === 'write_file' && awaitingApproval) {
+  if ((name === 'write_file' || name === 'run_python') && awaitingApproval) {
     return (
       <div
         className="inline-flex items-center gap-2 rounded-full border border-primary-100
@@ -175,9 +176,11 @@ function ToolBlock({
         <span dir="auto">
           {approvalPending
             ? t('chat.approvalSubmitting')
-            : t('chat.approvalWaiting', {
-                name: writeName || 'document',
-              })}
+            : name === 'run_python'
+              ? t('chat.approvalWaitingPython')
+              : t('chat.approvalWaiting', {
+                  name: writeName || 'document',
+                })}
         </span>
       </div>
     )

@@ -60,6 +60,8 @@ export interface ConversationSummary {
   title: string
   created_at: string
   updated_at: string
+  parent_id?: string | null
+  branched_at_position?: number | null
 }
 
 export interface StoredMessage {
@@ -109,7 +111,16 @@ export interface ModelInfo {
   loaded: boolean
 }
 
-export type Effort = 'minimal' | 'low' | 'medium' | 'high'
+export type Effort = 'minimal' | 'low' | 'medium' | 'xhigh'
+
+/** Map legacy stored values (`high`) onto Qwen3.8's real levels. */
+export function normalizeEffort(value: string | null | undefined): Effort {
+  if (value === 'high' || value === 'x-high') return 'xhigh'
+  if (value === 'minimal' || value === 'low' || value === 'medium' || value === 'xhigh') {
+    return value
+  }
+  return 'medium'
+}
 
 export interface Health {
   ok: boolean

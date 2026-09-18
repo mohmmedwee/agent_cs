@@ -10,14 +10,12 @@ Last agreed sequence: **PDF read + auto-title → XLSX export → run_python →
 - [x] **PDF reading** — `pypdf` in file read path; per-page text; cite page numbers in search
 - [x] **Auto-title** — refine chat title after first exchange via cheap upstream call
 - [x] **XLSX export** — `openpyxl` via `repositories/spreadsheets.py`; `write_file` builds real `.xlsx`
+- [x] **`run_python` sandbox** — temp cwd, stripped env, wall-clock + soft memory cap; register output files; HITL
 
 ## Next
 
-- [ ] **PDF export** — if still needed after XLSX
-
-- [ ] **`run_python` sandbox** — temp cwd, no network, wall-clock + memory cap; register output files
-- [ ] **Per-tool approval policy** — before python stays always-on (`always` / `ask` / `never`)
-- [ ] **Conversation branching** — rewind forks new row (`parent_id` + `branched_at_position`) + UI switcher
+- [ ] **PDF export** — if still needed
+- [ ] **Per-tool approval policy** — `always` / `ask` / `never` (python stays ask-by-default)
 - [ ] **Regenerate last answer** — optional model/effort override
 - [ ] **Usage logging** — prompt/completion tokens, latency, model, steps (feeds admin + compact tuning)
 
@@ -45,12 +43,14 @@ Last agreed sequence: **PDF read + auto-title → XLSX export → run_python →
 - [x] PDF reading for uploads + page cites in search
 - [x] Auto-title refine after first exchange
 - [x] XLSX export from Markdown tables / CSV via write_file
+- [x] `run_python` sandbox (HITL + temp cwd + timeout; register outputs)
 
 ## Explicitly deferred
 
 - Full marketing redesign (stay on Cleverso tokens)
 - Multi-agent planner mode (not needed yet)
 - RAG before PDF/read gaps are closed
+- Conversation branching (edit stays in-place rewind; no fork/switcher)
 
 ## Notes
 

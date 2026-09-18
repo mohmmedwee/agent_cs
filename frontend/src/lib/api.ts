@@ -120,6 +120,15 @@ export const api = {
     },
     remove: (id: string) => request<void>(`/api/files/${id}`, { method: 'DELETE' }),
     downloadUrl: (id: string) => `/api/files/${id}/download`,
+    downloadBytes: async (id: string) => {
+      const response = await fetch(`/api/files/${id}/download`, {
+        credentials: 'include',
+      })
+      if (!response.ok) {
+        throw new ApiError(response.status, await readError(response))
+      }
+      return response.arrayBuffer()
+    },
     preview: (id: string) =>
       request<{ id: string; name: string; text: string; truncated: boolean }>(
         `/api/files/${id}/preview`,
@@ -158,6 +167,8 @@ export const api = {
           method: 'POST',
           body: json({ conversation_id }),
         }),
+      active: (conversation_id: string) =>
+        request<{ active: boolean }>(`/api/chat/active/${conversation_id}`),
     },
 
   health: () => request<Health>('/api/health'),

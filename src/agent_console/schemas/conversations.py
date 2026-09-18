@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 __all__ = [
+    "BranchListResponse",
     "ConversationDetail",
     "ConversationListResponse",
     "ConversationSummary",
@@ -26,7 +27,7 @@ class RenameConversationRequest(BaseModel):
 
 
 class RewindConversationRequest(BaseModel):
-    """Keep the first N messages; delete everything after (for edit & regenerate)."""
+    """Keep the first N messages; later ones are dropped for edit & regenerate."""
 
     keep: int = Field(ge=0)
 
@@ -46,6 +47,8 @@ class ConversationSummary(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    parent_id: UUID | None = None
+    branched_at_position: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -65,6 +68,8 @@ class ConversationDetail(ConversationSummary):
             title=row.title,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            parent_id=row.parent_id,
+            branched_at_position=row.branched_at_position,
             messages=[MessageResponse.model_validate(m) for m in row.messages],
             context_compressed=bool(summary),
             context_summary=summary,
@@ -74,3 +79,7 @@ class ConversationDetail(ConversationSummary):
 
 class ConversationListResponse(BaseModel):
     conversations: list[ConversationSummary]
+
+
+class BranchListResponse(BaseModel):
+    branches: list[ConversationSummary]

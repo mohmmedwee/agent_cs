@@ -38,9 +38,22 @@ class UnreadableFileError(ValueError):
     """The file is stored but we have no way to read it as text."""
 
 
+def _fold_spaces(name: str) -> str:
+    """NFC + turn every Unicode space (incl. macOS screenshot NNBSP) into ' '."""
+    normalized = unicodedata.normalize("NFC", name)
+    return "".join(" " if unicodedata.category(ch) == "Zs" else ch for ch in normalized)
+
+
+def _name_key(name: str) -> str:
+    """Comparable file name: folded spaces, collapsed runs, trimmed."""
+    return " ".join(_fold_spaces(name).split())
+
+
 def _safe_name(name: str) -> str:
     """Strip any directory component so an upload cannot escape the store."""
-    cleaned = unicodedata.normalize("NFC", name).replace("\\", "/")
+    # Fold spaces so macOS "Screenshot … 2.29.11 PM.png" (U+202F before AM/PM)
+    # is stored with a normal space the model can copy back into tool calls.
+    cleaned = _fold_spaces(name).replace("\\", "/")
     return Path(cleaned).name or "unnamed"
 
 
@@ -80,7 +93,11 @@ class FileRepository:
             is_image=image_media_type(data) is not None,
         )
         self._session.add(row)
-        await self._session.flush()
+        # Commit now — the chat job holds this session open until the whole
+        # turn ends, but the UI fetches /api/files/{id}/download as soon as
+        # the tool result streams. A flush-only write is invisible to that
+        # other request, which then 404s with "no uploaded file matches".
+        await self._session.commit()
         return row
 
     async def list_for(self, user_id: UUID) -> list[StoredFileRow]:
@@ -92,7 +109,12 @@ class FileRepository:
         return list(result.scalars())
 
     async def get(self, user_id: UUID, ref: str) -> StoredFileRow:
-        """Look up by id, then by exact name — the model tends to use the name."""
+        """Look up by id, then by name — tolerant of macOS Unicode spaces.
+
+        The model often echoes a screenshot name with a normal space where the
+        stored name has U+202F (narrow no-break space before AM/PM). Exact SQL
+        equality fails; comparing folded keys (and a unique substring) fixes it.
+        """
         try:
             row = await self._session.get(StoredFileRow, UUID(ref))
             if row is not None and row.user_id == user_id:
@@ -106,9 +128,33 @@ class FileRepository:
             )
         )
         row = result.scalars().first()
-        if row is None:
+        if row is not None:
+            return row
+
+        rows = await self.list_for(user_id)
+        key = _name_key(ref)
+        if not key:
             raise UnknownFileError(f"no uploaded file matches {ref!r}")
-        return row
+
+        keyed = [r for r in rows if _name_key(r.name) == key]
+        if len(keyed) == 1:
+            return keyed[0]
+        if len(keyed) > 1:
+            # Same display name uploaded twice — newest wins.
+            return keyed[-1]
+
+        # Unique substring: lets "2.29.11" resolve a long screenshot name.
+        if len(key) >= 3:
+            partial = [r for r in rows if key in _name_key(r.name)]
+            if len(partial) == 1:
+                return partial[0]
+            if len(partial) > 1:
+                names = ", ".join(r.name for r in partial[:8])
+                raise UnknownFileError(
+                    f"ambiguous file ref {ref!r}; matches: {names}"
+                )
+
+        raise UnknownFileError(f"no uploaded file matches {ref!r}")
 
     async def raw_bytes(self, user_id: UUID, ref: str) -> bytes:
         row = await self.get(user_id, ref)
@@ -118,7 +164,7 @@ class FileRepository:
         row = await self.get(user_id, ref)
         self._path(row.storage_key).unlink(missing_ok=True)
         await self._session.delete(row)
-        await self._session.flush()
+        await self._session.commit()
 
     async def text(self, user_id: UUID, ref: str) -> str:
         row = await self.get(user_id, ref)

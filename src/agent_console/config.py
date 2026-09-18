@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     upstream: str = Field(
-        default="http://172.25.44.38:1234/v1",
+        default="http://172.25.2.225:1234/v1",
         description="Base URL of the OpenAI-compatible endpoint, including the /v1 path.",
     )
 
@@ -89,7 +89,14 @@ class Settings(BaseSettings):
             "change which one answers."
         ),
     )
-    max_steps: int = Field(default=8, gt=0, description="Tool-call rounds before the loop gives up.")
+    max_steps: int = Field(
+        default=24,
+        gt=0,
+        description=(
+            "Tool-call rounds before the loop wraps up. Exploration tools "
+            "(list/search/skills) do not count against this budget."
+        ),
+    )
 
     context_window: int = Field(
         default=32_768,
@@ -127,12 +134,13 @@ class Settings(BaseSettings):
         ),
     )
     max_completion_tokens: int = Field(
-        default=4_096,
+        default=8_192,
         gt=256,
         description=(
             "Hard cap on tokens generated in one model completion. Prevents "
             "runaway loops (e.g. endless laughter characters) from filling "
-            "the context window."
+            "the context window. Raise this if high-effort reasoning burns "
+            "the budget and returns an empty reply before tool calls."
         ),
     )
     max_memory_items: int = Field(
@@ -147,16 +155,33 @@ class Settings(BaseSettings):
     )
 
     approval_required_tools: set[str] = Field(
-        default_factory=lambda: {"write_file"},
+        default_factory=lambda: {"write_file", "run_python"},
         description=(
             "Tool names that pause for human allow/deny before running. "
-            "write_file is the default: it publishes bytes the user can download."
+            "write_file publishes downloadable bytes; run_python executes code."
         ),
     )
     approval_timeout: float = Field(
         default=600.0,
         gt=0,
         description="Seconds to wait for an approval before treating it as deny.",
+    )
+    python_timeout: float = Field(
+        default=30.0,
+        gt=0,
+        description="Wall-clock seconds allowed for one run_python script.",
+    )
+    python_max_output_chars: int = Field(
+        default=32_000,
+        gt=0,
+        description="Max characters kept from run_python stdout or stderr.",
+    )
+    python_memory_bytes: int = Field(
+        default=512 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Soft address-space cap for run_python when the OS honors RLIMIT_AS."
+        ),
     )
 
     request_timeout: float = Field(
@@ -203,6 +228,7 @@ class Settings(BaseSettings):
             "planning-with-intention",
             "research",
             "working-with-documents",
+            "file-reading",
             "writing-deliverables",
             "replying-bilingually",
             "diagnosing-problems",
@@ -262,10 +288,14 @@ class Settings(BaseSettings):
         "or when it naturally fits an introduction.\n\n"
         "## What you can actually do\n"
         "You have working, real-time access to the internet through `web_search` "
-        "and `fetch_url`. You can read and write files, and do exact arithmetic. "
-        "You can also see images: call `view_image` with a specific question and "
-        "you get back an answer about what the picture contains. These tools work "
-        "right now.\n\n"
+        "and `fetch_url`. You can read and write files. For charts/plots, data "
+        "cleaning or transforms, generating files from code, or computation that "
+        "is awkward by hand, call `run_python` yourself — the user should not "
+        "have to say \"use Python\". Simple one-line arithmetic can use "
+        "`calculate` instead. `run_python` pauses for their Allow/Deny; do not "
+        "ask in chat whether to run it. You can also see images: call "
+        "`view_image` with a specific question and you get back an answer about "
+        "what the picture contains. These tools work right now.\n\n"
         "You can remember durable facts about this user across chats with "
         "`remember`, remove them with `forget`, and inspect them with "
         "`list_memories`. When they say \"remember that…\" or share a stable "

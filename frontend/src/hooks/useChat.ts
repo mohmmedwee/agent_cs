@@ -50,9 +50,9 @@ export function useChat({ conversationId, model, effort, title }: Options) {
     () => {
       const snap = getChatRun(conversationId)
       if (!snap) return 'idle'
-      return `${snap.busy}:${snap.queue.length}:${snap.turns.length}:${JSON.stringify(
-        snap.turns[snap.turns.length - 1],
-      )}`
+      // Never JSON.stringify turns — xhigh reasoning made that allocate
+      // multi‑MB strings on every token and crashed the tab.
+      return `${snap.busy}:${snap.queue.length}:${snap.turns.length}:${snap.version}`
     },
     () => 'idle',
   )

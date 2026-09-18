@@ -11,23 +11,49 @@ export async function* streamChat(
   payload: ChatPayload,
   signal: AbortSignal,
 ): AsyncGenerator<AgentEvent> {
-  const response = await fetch('/api/chat', {
+  yield* readSseStream(await postSse('/api/chat', payload, signal), signal)
+}
+
+/** Reattach to a run that survived a refresh / navigate-away. */
+export async function* watchChat(
+  conversationId: string,
+  signal: AbortSignal,
+): AsyncGenerator<AgentEvent> {
+  yield* readSseStream(
+    await postSse('/api/chat/watch', { conversation_id: conversationId }, signal),
+    signal,
+  )
+}
+
+async function postSse(
+  path: string,
+  body: unknown,
+  signal: AbortSignal,
+): Promise<Response> {
+  const response = await fetch(path, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
     signal,
   })
   if (!response.ok) {
     throw new ApiError(response.status, `server returned ${response.status}`)
   }
   if (!response.body) throw new Error('server sent no body')
+  return response
+}
 
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+async function* readSseStream(
+  response: Response,
+  signal: AbortSignal,
+): AsyncGenerator<AgentEvent> {
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader()
   let carry = ''
 
   try {
     while (true) {
+      if (signal.aborted) break
       const { value, done } = await reader.read()
       if (done) break
       carry += value
