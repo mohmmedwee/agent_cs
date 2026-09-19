@@ -26,6 +26,7 @@ from agent_console.services.docx_blocks import Block, Manifest, content_hash
 __all__ = [
     "BlockDiff",
     "EditOp",
+    "FORMAT_LOSS_NOTE",
     "ValidationError",
     "ValidationResult",
     "apply_approved_payload",
@@ -57,6 +58,8 @@ class EditOp:
     relative_to: str | None = None
     position: str | None = None  # before | after
     new_id: str | None = None  # optional temp id for insert
+    # Required when rewrite would flatten mixed inline formatting.
+    allow_format_loss: bool = False
 
 
 @dataclass(frozen=True)
@@ -322,6 +325,65 @@ def _paragraphs_and_root(data: bytes) -> tuple[list[ET.Element], ET.Element]:
     return list(root.iter(f"{_WORD_NS}p")), root
 
 
+_FIELD_OR_REVISION_TAGS = (
+    f"{_WORD_NS}fldChar",
+    f"{_WORD_NS}fldSimple",
+    f"{_WORD_NS}ins",
+    f"{_WORD_NS}del",
+)
+
+FORMAT_LOSS_NOTE = (
+    "This rewrite discards mixed inline formatting (bold, links, etc.)."
+)
+
+
+def _reject_field_or_revision(paragraph: ET.Element, block_id: str) -> None:
+    """Phase 1: refuse edits inside fields or tracked changes."""
+    for tag in _FIELD_OR_REVISION_TAGS:
+        if next(paragraph.iter(tag), None) is not None:
+            local = tag.rsplit("}", 1)[-1]
+            raise ValidationError(
+                f"refusing to edit {block_id}: paragraph contains w:{local} "
+                "(fields and tracked changes are not editable yet); "
+                "re-read and pick another block"
+            )
+
+
+def _rpr_fingerprint(run: ET.Element) -> str:
+    rpr = run.find(f"{_WORD_NS}rPr")
+    if rpr is None:
+        return ""
+    return ET.canonicalize(ET.tostring(rpr, encoding="unicode"))
+
+
+def _iter_runs(paragraph: ET.Element) -> list[ET.Element]:
+    runs: list[ET.Element] = []
+    for child in paragraph:
+        if child.tag == f"{_WORD_NS}r":
+            runs.append(child)
+        elif child.tag == f"{_WORD_NS}hyperlink":
+            runs.extend(r for r in child if r.tag == f"{_WORD_NS}r")
+    return runs
+
+
+def _has_mixed_inline_formatting(paragraph: ET.Element) -> bool:
+    """True when rewrite would discard distinct run formatting or hyperlinks."""
+    if next(paragraph.iter(f"{_WORD_NS}hyperlink"), None) is not None:
+        return True
+    fingerprints = {_rpr_fingerprint(run) for run in _iter_runs(paragraph)}
+    return len(fingerprints) > 1
+
+
+def _require_editable_paragraph(
+    paragraphs: list[ET.Element] | None, block: Block
+) -> ET.Element | None:
+    if paragraphs is None:
+        return None
+    paragraph = paragraphs[block.index]
+    _reject_field_or_revision(paragraph, block.id)
+    return paragraph
+
+
 def validate_ops(
     manifest: Manifest, ops: list[EditOp], *, data: bytes | None = None
 ) -> ValidationResult:
@@ -359,12 +421,11 @@ def validate_ops(
                 raise ValidationError("replace requires block_id, old, and new")
             _reject_temp_as_target(op.block_id)
             block = _require_block(manifest, op.block_id)
+            paragraph = _require_editable_paragraph(paragraphs, block)
             before = texts[block.id]
             after = _replace_once(before, op.old, op.new)
-            if paragraphs is not None:
-                _check_replace_in_paragraph(
-                    paragraphs[block.index], before, op.old
-                )
+            if paragraph is not None:
+                _check_replace_in_paragraph(paragraph, before, op.old)
             texts[block.id] = after
             diffs.append(BlockDiff(block_id=block.id, before=before, after=after))
 
@@ -373,11 +434,19 @@ def validate_ops(
                 raise ValidationError("rewrite requires block_id, content, and hash")
             _reject_temp_as_target(op.block_id)
             block = _require_block(manifest, op.block_id)
+            paragraph = _require_editable_paragraph(paragraphs, block)
             if op.hash != hashes[block.id]:
                 raise ValidationError(
                     f"stale hash for {block.id}: expected {hashes[block.id]}, "
                     f"got {op.hash}; re-read the document"
                 )
+            if paragraph is not None and _has_mixed_inline_formatting(paragraph):
+                if not op.allow_format_loss:
+                    raise ValidationError(
+                        f"rewrite of {block.id} would discard mixed inline formatting; "
+                        "set allow_format_loss to true to confirm, or use replace "
+                        "inside a single run"
+                    )
             before = texts[block.id]
             after = op.content
             texts[block.id] = after
@@ -388,6 +457,7 @@ def validate_ops(
                 raise ValidationError("delete requires block_id and hash")
             _reject_temp_as_target(op.block_id)
             block = _require_block(manifest, op.block_id)
+            _require_editable_paragraph(paragraphs, block)
             if op.hash != hashes[block.id]:
                 raise ValidationError(
                     f"stale hash for {block.id}: expected {hashes[block.id]}, "
@@ -689,6 +759,7 @@ def ops_from_payload(payload: dict[str, Any]) -> list[EditOp]:
                 relative_to=item.get("relative_to"),
                 position=item.get("position"),
                 new_id=item.get("new_id"),
+                allow_format_loss=bool(item.get("allow_format_loss")),
             )
         )
     return ops
