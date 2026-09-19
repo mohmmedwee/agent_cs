@@ -4,6 +4,9 @@ Keyed by conversation + tool-call id. Optional Redis args match app wiring;
 payloads are plain JSON only so a later Redis backend is a storage swap.
 At apply time, re-parse the tip and revalidate — never trust objects from the
 payload beyond the declared ops/ids/hashes/diff text.
+
+Payloads are single-use: `take_payload` is an atomic get-and-delete (dict pop
+locally; Redis GETDEL when available). Pending payloads also expire by TTL.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 from redis.asyncio import Redis
@@ -18,6 +22,9 @@ from redis.asyncio import Redis
 __all__ = ["ApprovalBroker"]
 
 logger = logging.getLogger(__name__)
+
+# Default wall-clock TTL when wait() does not pass a tighter timeout.
+_DEFAULT_PAYLOAD_TTL_SECONDS = 600.0
 
 
 def _as_json_dict(payload: dict[str, Any]) -> dict[str, Any]:
@@ -38,8 +45,9 @@ class ApprovalBroker:
         self._redis = redis
         self._prefix = prefix
         self._pending: dict[str, asyncio.Future[bool]] = {}
-        # Plain JSON dicts only — never lxml / Element / Document handles.
-        self._payloads: dict[str, dict[str, Any]] = {}
+        # key -> (payload, expires_at monotonic)
+        self._payloads: dict[str, tuple[dict[str, Any], float]] = {}
+        self._payload_lock = asyncio.Lock()
 
     @staticmethod
     def _key(conversation_id: str, call_id: str) -> str:
@@ -49,22 +57,76 @@ class ApprovalBroker:
         return f"{self._prefix}approval:payload:{conversation_id}:{call_id}"
 
     def put_payload(
-        self, conversation_id: str, call_id: str, payload: dict[str, Any]
+        self,
+        conversation_id: str,
+        call_id: str,
+        payload: dict[str, Any],
+        *,
+        ttl_seconds: float | None = None,
     ) -> dict[str, Any]:
-        """Store a JSON-safe approval payload (sync; Redis write is best-effort)."""
+        """Store a JSON-safe approval payload with a TTL."""
         clean = _as_json_dict(payload)
-        self._payloads[self._key(conversation_id, call_id)] = clean
+        ttl = (
+            _DEFAULT_PAYLOAD_TTL_SECONDS
+            if ttl_seconds is None
+            else max(0.001, float(ttl_seconds))
+        )
+        expires = time.monotonic() + ttl
+        self._payloads[self._key(conversation_id, call_id)] = (clean, expires)
         return clean
 
     def get_payload(
         self, conversation_id: str, call_id: str
     ) -> dict[str, Any] | None:
-        return self._payloads.get(self._key(conversation_id, call_id))
+        """Peek without consuming. Expired entries are dropped."""
+        key = self._key(conversation_id, call_id)
+        item = self._payloads.get(key)
+        if item is None:
+            return None
+        payload, expires = item
+        if time.monotonic() >= expires:
+            self._payloads.pop(key, None)
+            return None
+        return payload
 
     def take_payload(
         self, conversation_id: str, call_id: str
     ) -> dict[str, Any] | None:
-        return self._payloads.pop(self._key(conversation_id, call_id), None)
+        """Atomic get-and-delete. Second call returns None (single-use)."""
+        key = self._key(conversation_id, call_id)
+        item = self._payloads.pop(key, None)
+        if item is None:
+            return None
+        payload, expires = item
+        if time.monotonic() >= expires:
+            return None
+        return payload
+
+    async def take_payload_async(
+        self, conversation_id: str, call_id: str
+    ) -> dict[str, Any] | None:
+        """Async take: Redis GETDEL when configured, else locked in-memory pop."""
+        if self._redis is not None:
+            rkey = self._payload_redis_key(conversation_id, call_id)
+            try:
+                raw = await self._redis.getdel(rkey)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("approval payload redis GETDEL failed: %s", exc)
+                raw = None
+            # Always drop the local mirror so a retry cannot re-apply.
+            self.take_payload(conversation_id, call_id)
+            if raw is None:
+                return None
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+            return data if isinstance(data, dict) else None
+
+        async with self._payload_lock:
+            return self.take_payload(conversation_id, call_id)
 
     async def wait(
         self,
@@ -81,13 +143,15 @@ class ApprovalBroker:
         """
         key = self._key(conversation_id, call_id)
         if payload is not None:
-            clean = self.put_payload(conversation_id, call_id, payload)
+            ttl = max(60.0, float(timeout) + 60.0)
+            clean = self.put_payload(
+                conversation_id, call_id, payload, ttl_seconds=ttl
+            )
             if self._redis is not None:
-                ttl = max(60, int(timeout) + 60)
                 try:
                     await self._redis.setex(
                         self._payload_redis_key(conversation_id, call_id),
-                        ttl,
+                        int(ttl),
                         json.dumps(clean),
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -106,28 +170,14 @@ class ApprovalBroker:
         except TimeoutError:
             if not future.done():
                 future.set_result(False)
-            self.take_payload(conversation_id, call_id)
-            if self._redis is not None:
-                try:
-                    await self._redis.delete(
-                        self._payload_redis_key(conversation_id, call_id)
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("approval payload redis delete failed: %s", exc)
+            await self.take_payload_async(conversation_id, call_id)
             return False
         finally:
             if self._pending.get(key) is future:
                 self._pending.pop(key, None)
 
         if not allowed:
-            self.take_payload(conversation_id, call_id)
-            if self._redis is not None:
-                try:
-                    await self._redis.delete(
-                        self._payload_redis_key(conversation_id, call_id)
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("approval payload redis delete failed: %s", exc)
+            await self.take_payload_async(conversation_id, call_id)
         return allowed
 
     def resolve(self, conversation_id: str, call_id: str, allowed: bool) -> bool:
@@ -144,4 +194,3 @@ class ApprovalBroker:
         for key, future in list(self._pending.items()):
             if key.startswith(prefix) and not future.done():
                 future.set_result(False)
-                # Payload cleanup happens in wait() when it observes deny.
