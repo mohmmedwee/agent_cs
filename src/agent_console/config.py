@@ -274,7 +274,37 @@ class Settings(BaseSettings):
 
     upload_dir: Path = Field(
         default=Path("uploads"),
-        description="Where uploaded files are written. Created at startup if missing.",
+        description=(
+            "Where uploaded files are written when file_storage=local. "
+            "Created at startup if missing."
+        ),
+    )
+    file_storage: str = Field(
+        default="local",
+        description=(
+            "Blob backend for uploads: 'local' (upload_dir) or 's3' "
+            "(S3/MinIO — required for multi-pod k8s)."
+        ),
+    )
+    s3_endpoint_url: str | None = Field(
+        default=None,
+        description="S3 API endpoint. Set for MinIO (e.g. http://minio:9000); omit for AWS.",
+    )
+    s3_bucket: str = Field(
+        default="agent-console",
+        description="Bucket name when file_storage=s3.",
+    )
+    s3_access_key: str = Field(
+        default="",
+        description="Access key for S3/MinIO. Empty uses the default AWS credential chain.",
+    )
+    s3_secret_key: str = Field(
+        default="",
+        description="Secret key for S3/MinIO.",
+    )
+    s3_region: str = Field(
+        default="us-east-1",
+        description="Region passed to the S3 client.",
     )
     max_upload_bytes: int = Field(
         default=10 * 1024 * 1024, gt=0, description="Rejected above this size."

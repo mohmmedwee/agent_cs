@@ -1,10 +1,14 @@
-"""Uploaded files: metadata in Postgres, bytes on disk.
+"""Uploaded files: metadata in Postgres, bytes in a BlobStore.
 
-Bytes stay on the filesystem because streaming them through the database buys
+Bytes stay out of the database because streaming them through Postgres buys
 nothing here. The row is the source of truth for what exists and who owns it,
-so a file with no row is invisible even if it is still on disk.
+so a file with no row is invisible even if the blob still exists.
 
 Every method is scoped by `user_id`; one user can never reach another's file.
+
+Version chains are linear: each non-root row has a unique `parent_id` pointing
+at the previous tip. Content provenance (e.g. markdown used by convert) is
+`derived_from`, not the parent link.
 """
 
 import unicodedata
@@ -17,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent_console.db.models import StoredFileRow
 from agent_console.repositories.extraction import extract_text
 from agent_console.repositories.images import image_media_type
+from agent_console.storage.blob_store import BlobStore
 
 __all__ = [
     "FileRepository",
@@ -57,27 +62,46 @@ def _safe_name(name: str) -> str:
     return Path(cleaned).name or "unnamed"
 
 
-class FileRepository:
-    def __init__(self, session: AsyncSession, directory: Path, max_bytes: int) -> None:
-        self._session = session
-        self._directory = directory
-        self._max_bytes = max_bytes
-        self._directory.mkdir(parents=True, exist_ok=True)
+def _prefer_tip(rows: list[StoredFileRow]) -> StoredFileRow:
+    """Among same-name candidates, pick highest version then newest upload."""
+    return max(rows, key=lambda r: (r.version or 1, r.uploaded_at))
 
-    def _path(self, storage_key: str) -> Path:
-        return self._directory / storage_key
+
+class FileRepository:
+    def __init__(
+        self, session: AsyncSession, store: BlobStore, max_bytes: int
+    ) -> None:
+        self._session = session
+        self._store = store
+        self._max_bytes = max_bytes
 
     async def save(
-        self, user_id: UUID, name: str, data: bytes, content_type: str | None = None
+        self,
+        user_id: UUID,
+        name: str,
+        data: bytes,
+        content_type: str | None = None,
+        *,
+        parent_id: UUID | None = None,
+        derived_from: UUID | None = None,
     ) -> StoredFileRow:
         if len(data) > self._max_bytes:
             raise FileTooLargeError(
                 f"{name} is {len(data)} bytes; the limit is {self._max_bytes}"
             )
 
+        root_id: UUID | None = None
+        version = 1
+        if parent_id is not None:
+            parent = await self._session.get(StoredFileRow, parent_id)
+            if parent is None or parent.user_id != user_id:
+                raise UnknownFileError(f"no uploaded file matches parent {parent_id}")
+            root_id = parent.root_id or parent.id
+            version = (parent.version or 1) + 1
+
         safe = _safe_name(name)
         storage_key = uuid4().hex
-        self._path(storage_key).write_bytes(data)
+        self._store.put(storage_key, data, content_type=content_type)
 
         row = StoredFileRow(
             user_id=user_id,
@@ -91,14 +115,40 @@ class FileRepository:
             # Detected from the header, not the extension, because that is what
             # the vision model will actually receive.
             is_image=image_media_type(data) is not None,
+            parent_id=parent_id,
+            derived_from=derived_from,
+            root_id=root_id,
+            version=version,
         )
         self._session.add(row)
+        # Flush first so we can set root_id = id for new roots, and so a unique
+        # parent_id violation surfaces before we pretend the write succeeded.
+        await self._session.flush()
+        if parent_id is None:
+            row.root_id = row.id
+            row.version = 1
         # Commit now — the chat job holds this session open until the whole
         # turn ends, but the UI fetches /api/files/{id}/download as soon as
         # the tool result streams. A flush-only write is invisible to that
         # other request, which then 404s with "no uploaded file matches".
         await self._session.commit()
         return row
+
+    async def latest_in_chain(self, user_id: UUID, ref: str) -> StoredFileRow:
+        """Return the tip of the linear version chain containing `ref`."""
+        row = await self.get(user_id, ref)
+        root_id = row.root_id or row.id
+        result = await self._session.execute(
+            select(StoredFileRow)
+            .where(
+                StoredFileRow.user_id == user_id,
+                StoredFileRow.root_id == root_id,
+            )
+            .order_by(StoredFileRow.version.desc(), StoredFileRow.uploaded_at.desc())
+            .limit(1)
+        )
+        tip = result.scalar_one_or_none()
+        return tip if tip is not None else row
 
     async def list_for(self, user_id: UUID) -> list[StoredFileRow]:
         result = await self._session.execute(
@@ -114,6 +164,9 @@ class FileRepository:
         The model often echoes a screenshot name with a normal space where the
         stored name has U+202F (narrow no-break space before AM/PM). Exact SQL
         equality fails; comparing folded keys (and a unique substring) fixes it.
+
+        When several rows share a display name, the chain tip (highest version)
+        wins so edits land on the latest file.
         """
         try:
             row = await self._session.get(StoredFileRow, UUID(ref))
@@ -123,32 +176,39 @@ class FileRepository:
             pass
 
         result = await self._session.execute(
-            select(StoredFileRow).where(
-                StoredFileRow.user_id == user_id, StoredFileRow.name == ref
-            )
+            select(StoredFileRow)
+            .where(StoredFileRow.user_id == user_id, StoredFileRow.name == ref)
+            .order_by(StoredFileRow.version.desc(), StoredFileRow.uploaded_at.desc())
         )
-        row = result.scalars().first()
-        if row is not None:
-            return row
+        rows = list(result.scalars())
+        if len(rows) == 1:
+            return rows[0]
+        if len(rows) > 1:
+            return _prefer_tip(rows)
 
-        rows = await self.list_for(user_id)
+        all_rows = await self.list_for(user_id)
         key = _name_key(ref)
         if not key:
             raise UnknownFileError(f"no uploaded file matches {ref!r}")
 
-        keyed = [r for r in rows if _name_key(r.name) == key]
+        keyed = [r for r in all_rows if _name_key(r.name) == key]
         if len(keyed) == 1:
             return keyed[0]
         if len(keyed) > 1:
-            # Same display name uploaded twice — newest wins.
-            return keyed[-1]
+            return _prefer_tip(keyed)
 
         # Unique substring: lets "2.29.11" resolve a long screenshot name.
         if len(key) >= 3:
-            partial = [r for r in rows if key in _name_key(r.name)]
+            partial = [r for r in all_rows if key in _name_key(r.name)]
             if len(partial) == 1:
                 return partial[0]
             if len(partial) > 1:
+                # Prefer tip among ambiguous substring hits when they share a name.
+                by_name: dict[str, list[StoredFileRow]] = {}
+                for item in partial:
+                    by_name.setdefault(item.name, []).append(item)
+                if len(by_name) == 1:
+                    return _prefer_tip(partial)
                 names = ", ".join(r.name for r in partial[:8])
                 raise UnknownFileError(
                     f"ambiguous file ref {ref!r}; matches: {names}"
@@ -158,17 +218,17 @@ class FileRepository:
 
     async def raw_bytes(self, user_id: UUID, ref: str) -> bytes:
         row = await self.get(user_id, ref)
-        return self._path(row.storage_key).read_bytes()
+        return self._store.get(row.storage_key)
 
     async def delete(self, user_id: UUID, ref: str) -> None:
         row = await self.get(user_id, ref)
-        self._path(row.storage_key).unlink(missing_ok=True)
+        self._store.delete(row.storage_key)
         await self._session.delete(row)
         await self._session.commit()
 
     async def text(self, user_id: UUID, ref: str) -> str:
         row = await self.get(user_id, ref)
-        content = extract_text(self._path(row.storage_key).read_bytes(), row.name)
+        content = extract_text(self._store.get(row.storage_key), row.name)
         if content is None:
             raise UnreadableFileError(
                 f"{row.name} is not a format this server can read as text "

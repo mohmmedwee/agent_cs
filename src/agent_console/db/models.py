@@ -118,6 +118,11 @@ class StoredFileRow(Base):
     """Metadata for an upload. The bytes stay on disk under `storage_key`."""
 
     __tablename__ = "files"
+    __table_args__ = (
+        # Linear chains: at most one child per parent. Multiple NULL parents
+        # (roots) are allowed — Postgres UNIQUE permits several NULLs.
+        UniqueConstraint("parent_id", name="uq_files_parent_id"),
+    )
 
     id: Mapped[UUID] = _pk()
     user_id: Mapped[UUID] = mapped_column(
@@ -132,6 +137,26 @@ class StoredFileRow(Base):
     # file list does not have to open every file.
     is_text: Mapped[bool] = mapped_column(default=False)
     is_image: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Linear version chain. Roots have parent_id NULL and root_id = id.
+    # derived_from records content provenance (e.g. markdown source) without
+    # being the parent link — so convert rebuilds can parent the tip.
+    root_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("files.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    parent_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("files.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    derived_from: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("files.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     uploaded_at: Mapped[datetime] = timestamp_column()
 
     user: Mapped[User] = relationship(back_populates="files")

@@ -19,6 +19,7 @@ from agent_console.config import Settings, get_settings
 from agent_console.db.session import build_engine, build_session_factory
 from agent_console.repositories.skills import SkillRepository
 from agent_console.services.security import PasswordHasherService, SessionTokenService
+from agent_console.storage.blob_store import build_blob_store
 
 __all__ = ["app", "create_app"]
 
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     upload_dir = _resolve(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
+    blob_store = build_blob_store(settings, upload_dir)
 
     async with httpx.AsyncClient() as http_client:
         app.state.http_client = http_client
@@ -76,11 +78,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             directories=[_resolve(d) for d in settings.skill_dirs],
             allowlist=settings.skill_allowlist,
         )
-        app.state.approvals = ApprovalBroker()
-        app.state.chat_jobs = ChatJobBroker()
+        app.state.blob_store = blob_store
+        app.state.approvals = ApprovalBroker(redis, settings.redis_prefix)
+        app.state.chat_jobs = ChatJobBroker(redis, settings.redis_prefix)
 
         count = len(app.state.skill_repository.list())
-        logger.info("loaded %d skills; upstream %s", count, settings.upstream)
+        logger.info(
+            "loaded %d skills; upstream %s; redis=%s",
+            count,
+            settings.upstream,
+            "yes" if redis is not None else "no (in-memory jobs/approvals)",
+        )
 
         try:
             yield

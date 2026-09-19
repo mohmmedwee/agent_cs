@@ -167,8 +167,10 @@ async def _admin(user: CurrentUserDep) -> User:
 AdminDep = Annotated[User, Depends(_admin)]
 
 
-def _file_repository(session: DbSessionDep, settings: SettingsDep) -> FileRepository:
-    return FileRepository(session, settings.upload_dir, settings.max_upload_bytes)
+def _file_repository(request: Request, session: DbSessionDep, settings: SettingsDep) -> FileRepository:
+    return FileRepository(
+        session, request.app.state.blob_store, settings.max_upload_bytes
+    )
 
 
 def _memory_repository(session: DbSessionDep, settings: SettingsDep) -> MemoryRepository:
