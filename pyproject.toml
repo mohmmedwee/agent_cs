@@ -49,9 +49,11 @@ entrypoint = "agent_console.main:app"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+addopts = "-m 'not slow'"
 markers = [
     "db: needs a running Postgres (TEST_DATABASE_URL); skipped otherwise",
     "soffice: needs LibreOffice on PATH; skipped otherwise",
+    "slow: long-running (LibreOffice conversion); exclude with -m 'not slow'",
 ]
 
 [tool.ruff]

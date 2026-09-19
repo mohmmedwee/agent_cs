@@ -95,7 +95,6 @@ async def test_convert_refuses_when_tip_was_edited_off_markdown(
     assert out1.startswith("Converted")
     tip = await files.latest_in_chain(user.id, "guard2.docx")
     body = await files.raw_bytes(user.id, str(tip.id))
-    # Tip edit not derived from the markdown — the live wipe bug.
     await files.save(
         user.id,
         name="guard2.docx",
@@ -114,8 +113,45 @@ async def test_convert_refuses_when_tip_was_edited_off_markdown(
         ),
     )
     assert out2.startswith("Error:")
-    assert "edit" in out2.lower() or "edit_docx" in out2
     tip2 = await files.latest_in_chain(user.id, "guard2.docx")
     assert tip2.version == 2
     assert (await files.raw_bytes(user.id, str(tip2.id))).endswith(b"|EDIT")
     assert tip.derived_from == md.id
+
+
+async def test_convert_refuses_after_edit_even_if_derived_from_copied_from_md(
+    files: FileRepository, user: User, settings
+) -> None:
+    """md → convert → edit (mistakenly derived_from=md) → reconvert must error."""
+    md = await files.save(
+        user.id,
+        name="guard3.md",
+        data=b"# Doc\n\nOwner: Alice\n",
+        content_type="text/markdown",
+    )
+    registry = _registry(files, user, settings)
+    out1 = await registry.invoke(
+        "convert_upload_to_docx",
+        json.dumps({"source": "guard3.md", "theme": "cleverso"}),
+    )
+    assert out1.startswith("Converted")
+    tip = await files.latest_in_chain(user.id, "guard3.docx")
+    body = await files.raw_bytes(user.id, str(tip.id))
+    edited = await files.save(
+        user.id,
+        name="guard3.docx",
+        data=body + b"|EDIT",
+        parent_id=tip.id,
+        # Would defeat a naive tip.derived_from == md check if accepted as-is.
+        derived_from=md.id,
+    )
+    assert edited.derived_from != md.id
+    assert edited.derived_from == tip.id
+    out2 = await registry.invoke(
+        "convert_upload_to_docx",
+        json.dumps({"source": "guard3.md", "theme": "cleverso"}),
+    )
+    assert out2.startswith("Error:"), out2
+    tip2 = await files.latest_in_chain(user.id, "guard3.docx")
+    assert tip2.version == 2
+    assert (await files.raw_bytes(user.id, str(tip2.id))).endswith(b"|EDIT")

@@ -310,6 +310,8 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             existing = None
         if existing is not None:
             tip = await files.latest_in_chain(user_id, str(existing.id))
+            # Tip must itself be a convert from this markdown. Edits must not
+            # inherit derived_from=md (save(..., from_convert=False) strips that).
             if tip.derived_from != row.id:
                 return (
                     f"Error: {out_name} already has edits (or was not produced "
@@ -336,6 +338,7 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                 content_type=DOCX_MEDIA_TYPE,
                 parent_id=parent_id,
                 derived_from=row.id,
+                from_convert=True,
             )
         except FileTooLargeError as exc:
             return f"Error: {exc}"

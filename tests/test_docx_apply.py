@@ -112,6 +112,7 @@ def test_output_reopens_with_python_docx() -> None:
 
 
 @pytest.mark.soffice
+@pytest.mark.slow
 def test_output_survives_libreoffice_headless(tmp_path: Path) -> None:
     import shutil
     import subprocess

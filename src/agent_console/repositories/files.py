@@ -84,6 +84,7 @@ class FileRepository:
         *,
         parent_id: UUID | None = None,
         derived_from: UUID | None = None,
+        from_convert: bool = False,
     ) -> StoredFileRow:
         if len(data) > self._max_bytes:
             raise FileTooLargeError(
@@ -98,6 +99,19 @@ class FileRepository:
                 raise UnknownFileError(f"no uploaded file matches parent {parent_id}")
             root_id = parent.root_id or parent.id
             version = (parent.version or 1) + 1
+
+        # Only convert may claim markdown/text provenance. Tip edits that
+        # inherit derived_from=md would defeat the convert overwrite guard.
+        if (
+            derived_from is not None
+            and not from_convert
+            and _safe_name(name).lower().endswith(".docx")
+        ):
+            source = await self._session.get(StoredFileRow, derived_from)
+            if source is not None and source.user_id == user_id:
+                src_name = source.name.lower()
+                if src_name.endswith((".md", ".markdown", ".txt")):
+                    derived_from = parent_id
 
         safe = _safe_name(name)
         storage_key = uuid4().hex
