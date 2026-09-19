@@ -92,6 +92,75 @@ function tryRenderTableBlock(block: string): string | null {
   return parts.join('')
 }
 
+/**
+ * Turn already-escaped, inline-formatted text into block HTML.
+ * Used for the top-level document and again inside blockquotes so quoted
+ * tables/lists are not left as literal `|` / `-` / `1.` markers.
+ */
+function renderParagraphs(s: string): string {
+  const out: string[] = []
+  for (const para of s.split(/\n{2,}/)) {
+    const t = para.trim()
+    if (!t) continue
+
+    if (/^\u0000\d+\u0000$/.test(t)) {
+      out.push(t)
+      continue
+    }
+
+    const asTable = tryRenderTableBlock(t)
+    if (asTable) {
+      out.push(asTable)
+      continue
+    }
+
+    // Horizontal rules — model often separates sections with ---.
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) {
+      out.push('<hr>')
+      continue
+    }
+
+    const heading = t.match(/^(#{1,3})\s+(.*)$/m)
+    if (heading && t.startsWith('#')) {
+      const level = heading[1].length
+      out.push(`<h${level} dir="auto">${heading[2]}</h${level}>`)
+      continue
+    }
+
+    // Blockquotes. escapeHtml already turned leading `>` into `&gt;`.
+    // Strip markers, then re-parse so quoted tables/lists render properly.
+    if (/^\s*&gt; ?/.test(t)) {
+      const inner = t
+        .split('\n')
+        .map((l) => l.replace(/^\s*&gt; ?/, ''))
+        .join('\n')
+      out.push(`<blockquote dir="auto">${renderParagraphs(inner)}</blockquote>`)
+      continue
+    }
+
+    if (/^\s*[-*]\s+/.test(t)) {
+      const items = t
+        .split('\n')
+        .map((l) => `<li>${l.replace(/^\s*[-*]\s+/, '')}</li>`)
+        .join('')
+      out.push(`<ul dir="auto">${items}</ul>`)
+      continue
+    }
+
+    if (/^\s*\d+[.)]\s+/.test(t)) {
+      const items = t
+        .split('\n')
+        .map((l) => `<li>${l.replace(/^\s*\d+[.)]\s+/, '')}</li>`)
+        .join('')
+      out.push(`<ol dir="auto">${items}</ol>`)
+      continue
+    }
+
+    out.push(`<p dir="auto">${t.replace(/\n/g, '<br>')}</p>`)
+  }
+  return out.join('')
+}
+
 export function renderMarkdown(src: string): string {
   const blocks: string[] = []
 
@@ -127,51 +196,8 @@ export function renderMarkdown(src: string): string {
           : `<a href="${href}" target="_blank" rel="noopener">${label}</a>`,
     )
 
-  const out: string[] = []
-  for (const para of s.split(/\n{2,}/)) {
-    const t = para.trim()
-    if (!t) continue
-
-    if (/^\u0000\d+\u0000$/.test(t)) {
-      out.push(t)
-      continue
-    }
-
-    const asTable = tryRenderTableBlock(t)
-    if (asTable) {
-      out.push(asTable)
-      continue
-    }
-
-    const heading = t.match(/^(#{1,3})\s+(.*)$/m)
-    if (heading && t.startsWith('#')) {
-      const level = heading[1].length
-      out.push(`<h${level} dir="auto">${heading[2]}</h${level}>`)
-      continue
-    }
-
-    if (/^\s*[-*]\s+/.test(t)) {
-      const items = t
-        .split('\n')
-        .map((l) => `<li>${l.replace(/^\s*[-*]\s+/, '')}</li>`)
-        .join('')
-      out.push(`<ul dir="auto">${items}</ul>`)
-      continue
-    }
-
-    if (/^\s*\d+[.)]\s+/.test(t)) {
-      const items = t
-        .split('\n')
-        .map((l) => `<li>${l.replace(/^\s*\d+[.)]\s+/, '')}</li>`)
-        .join('')
-      out.push(`<ol dir="auto">${items}</ol>`)
-      continue
-    }
-
-    out.push(`<p dir="auto">${t.replace(/\n/g, '<br>')}</p>`)
-  }
-
-  return out
-    .join('')
-    .replace(/\u0000(\d+)\u0000/g, (_m, i: string) => blocks[Number(i)])
+  return renderParagraphs(s).replace(
+    /\u0000(\d+)\u0000/g,
+    (_m, i: string) => blocks[Number(i)],
+  )
 }

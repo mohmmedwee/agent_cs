@@ -328,6 +328,9 @@
 .prose-agent blockquote {
   @apply border-s-2 border-line ps-4 text-ink-2;
 }
+.prose-agent hr {
+  @apply border-0 border-t border-line;
+}
 .prose-agent table {
   @apply w-full min-w-[32rem] border-collapse text-sm;
 }
