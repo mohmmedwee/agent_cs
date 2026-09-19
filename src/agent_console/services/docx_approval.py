@@ -10,7 +10,7 @@ import difflib
 import re
 from typing import Any
 
-from agent_console.services.docx_edit import BlockDiff, EditOp
+from agent_console.services.docx_edit import BlockDiff, EditOp, FORMAT_LOSS_NOTE
 
 __all__ = [
     "MAX_CARD_CHANGES",
@@ -85,6 +85,7 @@ def build_approval_card(
 ) -> dict[str, Any]:
     """JSON-serializable card payload for ToolApprovalEvent / Composer."""
     changes: list[dict[str, Any]] = []
+    card_notes: list[str] = []
     for index, diff in enumerate(diffs[:max_changes]):
         op = ops[index] if index < len(ops) else None
         op_name = op.op if op else "edit"
@@ -100,10 +101,16 @@ def build_approval_card(
             before_segs, after_segs = word_diff_segments(before_t, after_t)
             entry["before_segments"] = before_segs
             entry["after_segments"] = after_segs
+        if op_name == "rewrite" and op and op.allow_format_loss:
+            entry["notes"].append(FORMAT_LOSS_NOTE)
+            if FORMAT_LOSS_NOTE not in card_notes:
+                card_notes.append(FORMAT_LOSS_NOTE)
         changes.append(entry)
 
     omitted = max(0, len(diffs) - len(changes))
-    card_notes = list(notes or [])
+    for note in notes or []:
+        if note not in card_notes:
+            card_notes.append(note)
     return {
         "file_name": file_name,
         "from_version": from_version,

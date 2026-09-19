@@ -52,6 +52,7 @@ def _parse_ops(raw: Any) -> list[EditOp]:
                 relative_to=item.get("relative_to"),
                 position=item.get("position"),
                 new_id=item.get("new_id"),
+                allow_format_loss=bool(item.get("allow_format_loss")),
             )
         )
     return ops
@@ -109,6 +110,7 @@ async def prepare_edit_docx_approval(
                 "relative_to": op.relative_to,
                 "position": op.position,
                 "new_id": op.new_id,
+                "allow_format_loss": op.allow_format_loss,
             }
             for op in ops
         ],
