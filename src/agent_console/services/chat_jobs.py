@@ -27,7 +27,13 @@ class _Job:
 class ChatJobBroker:
     """One background producer task per conversation, with fan-out for reconnect."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self, redis: object | None = None, prefix: str = "agentconsole:"
+    ) -> None:
+        # redis/prefix accepted for app wiring parity with multi-pod work;
+        # this process still keeps jobs in memory.
+        self._redis = redis
+        self._prefix = prefix
         self._jobs: dict[str, _Job] = {}
 
     def is_active(self, conversation_id: str) -> bool:
