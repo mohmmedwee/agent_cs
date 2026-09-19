@@ -1,6 +1,6 @@
 ---
 name: docx
-description: "Use this skill whenever the user wants to create, edit, or polish a Word document (.docx). Triggers: Word doc, .docx, report, memo, letter, proposal, or any polished downloadable document with headings, tables, or branding. Prefer this over inventing npm/pandoc workflows — this product builds .docx from Markdown via convert_upload_to_docx or write_file."
+description: "Use this skill whenever the user wants to create, edit, or polish a Word document (.docx). Triggers: Word doc, .docx, report, memo, letter, proposal, or any polished downloadable document with headings, tables, or branding. Prefer this over inventing npm/pandoc workflows."
 license: Proprietary. LICENSE.txt has complete terms
 ---
 
@@ -10,49 +10,103 @@ Do **not** use npm `docx`, pandoc, LibreOffice scripts, or the helper scripts un
 this skill's `scripts/` folder. Those assume Claude Code's shell and are not how
 documents are produced here.
 
-## Required workflow
+## Creating a new DOCX
 
-1. Call `read_skill` with `docx` (this file) when the user wants a polished Word doc.
-2. **Which file?** If they say "update the doc" / "that report" and more than one
-   upload could match, call `list_uploaded_files`, then `ask_user` with the file
-   names as clickable options — do not pick a version at random.
-3. **Look & colors?** If they want a restyle / theme / "make it branded" without
-   naming colors or a theme, call `ask_user` with 2–4 options (e.g. cleverso /
-   classic / modern, or their brand colors) before converting.
-4. **Uploaded Markdown/text already exists** (especially long reports): call
-   `convert_upload_to_docx`. Do **not** `read_uploaded_file` the whole body and
-   re-emit it through `write_file` — that OOMs local models on large files.
-5. **Content updates on a Markdown/text upload:** use `convert_upload_to_docx`
-   with small `replacements` and/or `sections` — never rewrite the entire file.
-   If they did not provide the new wording, ask for it first.
-6. **Content updates on an existing .docx only** (no `.md` source):
-   - Prefer `run_python` + `python-docx` to edit the uploaded `.docx` in place
-     (open it, change the table/section, save a new name). Stage the file with
-     `inputs`. Do **not** paste the whole document into a giant `write_file`.
-   - If the doc is short and you already have the full text from a prior read,
-     `write_file` a new `.docx` from Markdown is OK — keep it one call, then stop.
-7. **New content from scratch** (short): use `write_file` with a `.docx` name.
-8. Use `run_python` only when the tools above cannot cover the edit (charts,
-   complex table surgery, in-place `.docx` patches).
+1. Call `read_skill` with `docx` when the user wants a polished Word doc.
+2. **Which file?** If they say "update the doc" and more than one upload could
+   match, call `list_uploaded_files`, then `ask_user` with the file names as
+   options — do not pick at random.
+3. **Look & colors?** If they want a restyle without naming colors/theme, call
+   `ask_user` with 2–4 options before converting.
+4. **Uploaded Markdown/text** (especially long reports): `convert_upload_to_docx`.
+   Do **not** `read_uploaded_file` the whole body and re-emit through `write_file`.
+5. **Markdown content updates:** `convert_upload_to_docx` with small
+   `replacements` / `sections` — never rewrite the entire file.
+6. **New short content from scratch:** `write_file` with a `.docx` name.
 
-**Do not** spend the turn debating which tool is allowed. Pick one path, call
-the tool, and finish.
+## Editing an existing DOCX (required path)
 
-## convert_upload_to_docx
+Once a `.docx` tip exists, edit it with **`edit_docx`**. Do not reconvert.
+Do not silently fall back to `rewrite`, `run_python`, or `write_file`.
+
+### Workflow
+
+1. `search_uploaded_files` (optional) to locate the phrase / section.
+2. `read_uploaded_file` — DOCX lines are annotated as `[gN:p_#### h=…]`.
+3. Copy **IDs and hashes exactly** as shown. Temp IDs for inserts are `new_1`,
+   `new_2`, … — never generation-prefixed (`new_1`, not `g1:new_1`).
+4. Batch related changes into **one** `edit_docx` call.
+5. Retry at most **twice** after a fixable error, then ask the user.
+
+### Choosing an operation
+
+| Op | When | Notes |
+| --- | --- | --- |
+| `replace` | Small change | Include enough surrounding words in `old` to make it unique in that block. Prefer spans that sit inside one run. |
+| `rewrite` | Whole paragraph must change | Requires `hash`. On mixed-formatting paragraphs needs `allow_format_loss` — set **only after the user agrees**. |
+| `insert` | New paragraphs | Chain with `new_id=new_1` then `relative_to=new_1`. |
+| `delete` | Remove a paragraph | Requires `hash`. |
+
+### Errors → what to do
+
+| Error | Response |
+| --- | --- |
+| Generation mismatch | Re-read the document, retry with fresh IDs |
+| Stale hash | Re-read that block |
+| Ambiguous `old` | Add surrounding context to `old` |
+| `old` not found | Re-read the block; text may have changed |
+| `multi_run_span` | Try a shorter `old` that sits inside one run and is still unique (e.g. `01-01` instead of the full date). If that fails, ask the user — do **not** rewrite |
+| Field / revision rejection | Explain (e.g. "this paragraph has tracked changes; accept or reject them in Word first") |
+
+### Boundaries
+
+- **`run_python`** only for things `edit_docx` cannot do: headers, footers, images,
+  charts, complex layout. It invalidates all block IDs — re-read afterwards.
+- Never reconvert an edited DOCX chain to "fix" text.
+- Never invent IDs or hashes; always copy from the annotated read.
+
+### Worked patterns
+
+**Replace (preferred):**
+
+```text
+edit_docx name=report.docx generation=1
+operations:
+  - op: replace
+    block_id: g1:p_0012
+    old: "Status: Draft"
+    new: "Status: Final"
+```
+
+**Insert chain:**
+
+```text
+edit_docx name=report.docx generation=1
+operations:
+  - op: insert
+    relative_to: g1:p_0003
+    position: after
+    content: "## Findings"
+    new_id: new_1
+  - op: insert
+    relative_to: new_1
+    position: after
+    content: "Summary of the review."
+    new_id: new_2
+```
+
+## convert_upload_to_docx (Markdown → DOCX only)
 
 ### Convert only (theme / toc)
 
 ```text
-source: Alignment_Test_Cases_Report_GlobalSearch.md
+source: report.md
 theme: cleverso
 toc: true
 page_numbers: true
 ```
 
-### Update content without rewriting the whole file
-
-**Find/replace snippets** (exactly one match required, or set `count` /
-`replace_all`):
+### Update Markdown without rewriting the whole file
 
 ```text
 source: report.md
@@ -60,22 +114,7 @@ theme: cleverso
 replacements:
   - find: "Status: Draft"
     replace: "Status: Final"
-# If the phrase appears twice: count: 1  OR  replace_all: true
 ```
-
-**Rewrite one section** (heading match is case-insensitive / substring):
-
-```text
-source: report.md
-theme: cleverso
-sections:
-  - heading: "TC-02"
-    content: |
-      Updated findings for this test case only…
-```
-
-If you need several sections changed, call the tool once per section (or pass
-multiple `sections` entries), each with only that section's new Markdown.
 
 ## write_file (new / short content only)
 
@@ -102,8 +141,6 @@ Short purpose paragraph.
 | `modern` | Specs, technical notes |
 | `warm` | Guides, onboarding |
 | `editorial` | Neutral default |
-
-Table **headers** use the theme accent color with white bold text.
 
 ## After writing
 

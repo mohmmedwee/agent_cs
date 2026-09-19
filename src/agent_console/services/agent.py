@@ -39,6 +39,7 @@ from agent_console.services.tools.edit_docx import (
     apply_edit_docx_payload,
     prepare_edit_docx_approval,
 )
+from agent_console.services.docx_soak import SoakTracker
 
 __all__ = ["AgentService"]
 
@@ -229,6 +230,10 @@ class AgentService:
             for name in (auto_approve_tools or set())
             if name in self._settings.approval_required_tools
         }
+        soak = SoakTracker(
+            conversation_id=conversation_id,
+            user_id=str(self._user_id) if self._user_id else None,
+        )
 
         try:
             chosen = model or await self._upstream.resolve_model()
@@ -394,6 +399,10 @@ class AgentService:
                     name,
                     _preview(raw_arguments, 200),
                 )
+                if name == "edit_docx":
+                    soak.edit_proposed(raw_arguments)
+                else:
+                    soak.tool_used(name, raw_arguments)
 
                 yield ToolCallEvent(id=call_id, name=name, arguments=raw_arguments)
 
@@ -407,6 +416,8 @@ class AgentService:
                             name,
                             _preview(arg_error),
                         )
+                        if name == "edit_docx":
+                            soak.edit_result(raw_arguments, arg_error)
                         yield ToolResultEvent(
                             id=call_id, name=name, result=arg_error
                         )
@@ -431,6 +442,7 @@ class AgentService:
                             self._files, self._user_id, raw_arguments
                         )
                         if prep_error:
+                            soak.edit_result(raw_arguments, prep_error)
                             yield ToolResultEvent(
                                 id=call_id, name=name, result=prep_error
                             )
@@ -457,6 +469,8 @@ class AgentService:
                             "Do not retry the same write unless they ask."
                         )
                         logger.info("tool denied name=%s", name)
+                        if name == "edit_docx":
+                            soak.edit_denied(raw_arguments)
                         yield ToolResultEvent(id=call_id, name=name, result=result)
                         conversation.append(
                             build_tool_message(call_id, name, result)
@@ -477,6 +491,7 @@ class AgentService:
                             result = await apply_edit_docx_payload(
                                 self._files, self._user_id, taken
                             )
+                        soak.edit_result(raw_arguments, result)
                         logger.info(
                             "tool result name=%s chars=%s preview=%s",
                             name,
@@ -492,6 +507,8 @@ class AgentService:
                     logger.info("tool auto-approved name=%s", name)
 
                 result = await self._tools.invoke(name, raw_arguments)
+                if name == "edit_docx":
+                    soak.edit_result(raw_arguments, result)
                 logger.info(
                     "tool result name=%s chars=%s preview=%s",
                     name,

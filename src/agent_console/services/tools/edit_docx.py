@@ -208,13 +208,24 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
     @registry.tool(
         name="edit_docx",
         description=(
-            "Edit an uploaded .docx by block id (from annotated read/search). "
-            "Ops: replace (must sit inside one w:t), rewrite, insert, delete. "
-            "Insert chains: declare new_id as new_<digits> and relative_to a "
-            "prior new_id in the same batch "
-            '(e.g. insert relative_to=g1:p_0001 new_id=new_1, then '
-            "relative_to=new_1). Requires approval; server shows a plaintext "
-            "diff before applying."
+            "Edit an uploaded .docx by block id from annotated read/search "
+            "(`[gN:p_#### h=…]`). Copy ids/hashes exactly. Batch related "
+            "changes in one call. Ops: replace (prefer short unique `old` "
+            "inside one run), rewrite (needs hash; `allow_format_loss` only "
+            "after user agrees), insert (temp ids `new_1`/`new_2`, never "
+            "gN-prefixed), delete (needs hash).\n"
+            "Example replace: "
+            '{"name":"report.docx","generation":1,"operations":['
+            '{"op":"replace","block_id":"g1:p_0012","old":"Status: Draft",'
+            '"new":"Status: Final"}]}.\n'
+            "Example insert chain: "
+            '{"name":"report.docx","generation":1,"operations":['
+            '{"op":"insert","relative_to":"g1:p_0003","position":"after",'
+            '"content":"## Findings","new_id":"new_1"},'
+            '{"op":"insert","relative_to":"new_1","position":"after",'
+            '"content":"Summary.","new_id":"new_2"}]}.\n'
+            "On multi_run_span: shorten `old` to one run; do not rewrite. "
+            "Requires approval; server shows a plaintext diff."
         ),
         parameters={
             "type": "object",
@@ -225,7 +236,10 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                 },
                 "generation": {
                     "type": "integer",
-                    "description": "Manifest generation from the annotated read (default 1).",
+                    "description": (
+                        "Manifest generation from the annotated read "
+                        "(must match tip; omit to use tip generation)."
+                    ),
                 },
                 "operations": {
                     "type": "array",

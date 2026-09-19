@@ -230,33 +230,53 @@ def test_different_bold_still_multi_run_span() -> None:
         )
 
 
-def test_corpus_cross_run_merge_rate() -> None:
-    """Measure identical-rPr merge vs multi_run_span on DOCX_PARITY_DIR corpus."""
+def test_corpus_cross_run_merge_rate(capsys: pytest.CaptureFixture[str]) -> None:
+    """Measure identical-rPr merge vs multi_run_span on DOCX_PARITY_DIR corpus.
+
+    Tries up to three cross-run spans per file (first multi-run paragraphs).
+    Prints merge / multi_run_span rates — useful for Phase 2 urgency.
+    """
     paths = _iter_corpus()
     if not paths:
         pytest.skip("DOCX_PARITY_DIR not set — no external corpus")
     merged = 0
     rejected = 0
     other = 0
+    attempts = 0
     for path in paths:
         try:
             data = path.read_bytes()
             manifest = assign_fresh_manifest(data, generation=1)
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                if "word/document.xml" not in zf.namelist():
+                    continue
                 root = ET.fromstring(zf.read("word/document.xml"))
             paragraphs = list(root.iter(f"{W}p"))
-            attempted = False
+            file_attempts = 0
             for block in manifest.blocks:
+                if file_attempts >= 3:
+                    break
                 if block.index >= len(paragraphs):
                     continue
                 p = paragraphs[block.index]
                 runs = [c for c in p if c.tag == f"{W}r"]
                 if len(runs) < 2:
                     continue
+                run_texts = [
+                    "".join((t.text or "") for t in r.iter(f"{W}t")) for r in runs
+                ]
                 text = block.text
-                if len(text) < 4 or text.count(text) != 1:
+                if len(text) < 4:
                     continue
-                # Whole-paragraph replace forces a cross-run span when multi-run.
+                t0 = run_texts[0]
+                if t0 and len(t0) < len(text):
+                    old = text[: len(t0) + min(4, len(text) - len(t0))]
+                else:
+                    old = text
+                if len(old) < 2 or text.count(old) != 1:
+                    continue
+                attempts += 1
+                file_attempts += 1
                 try:
                     apply_ops(
                         data,
@@ -265,7 +285,7 @@ def test_corpus_cross_run_merge_rate() -> None:
                             EditOp(
                                 op="replace",
                                 block_id=block.id,
-                                old=text,
+                                old=old,
                                 new="X",
                             )
                         ],
@@ -276,15 +296,18 @@ def test_corpus_cross_run_merge_rate() -> None:
                         rejected += 1
                     else:
                         other += 1
-                attempted = True
-                break
-            if not attempted:
-                other += 1
+                except Exception:  # noqa: BLE001
+                    other += 1
         except Exception:  # noqa: BLE001
             other += 1
-    total = merged + rejected + other
+    total = attempts
     print(
-        f"\ncorpus cross-run: merged={merged} multi_run_span={rejected} "
-        f"other={other} total={total}"
+        f"\ncorpus cross-run: attempts={attempts} merged={merged} "
+        f"multi_run_span={rejected} other={other}"
     )
+    if attempts:
+        print(
+            f"merge_rate={merged / attempts:.1%} "
+            f"reject_rate={rejected / attempts:.1%}"
+        )
     assert total > 0

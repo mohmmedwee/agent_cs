@@ -1,0 +1,107 @@
+{
+  "rounds": 3,
+  "model": "qwen/qwen3.8-27b",
+  "cases": {
+    "ambiguous_date": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "footer_unsupported": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "insert_section": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "multi_change": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "multi_run_span": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "replace_ar": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "replace_en": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "rpr_merge_smoke": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "table_cell": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    },
+    "tracked_changes": {
+      "passes": 3,
+      "runs": 3,
+      "pass_rate": 1.0,
+      "outcomes": [
+        "pass",
+        "pass",
+        "pass"
+      ]
+    }
+  },
+  "notes": "Unique filename per run. An earlier 3-round suite reused tip names and falsely failed when search hit already-edited tips (Status: Final)."
+}

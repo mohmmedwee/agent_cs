@@ -442,9 +442,12 @@ class Settings(BaseSettings):
         "That path crashes local models on large files. To update Markdown "
         "content, pass small `replacements` or `sections` on that same tool. "
         "If the only upload is already a .docx, do not call "
-        "`convert_upload_to_docx` — edit it with `run_python` + python-docx "
-        "(or `write_file` a short new .docx). Pick one path and finish; do "
-        "not debate tools in the reply."
+        "`convert_upload_to_docx` — load the `docx` skill and edit with "
+        "`edit_docx` (search → annotated read → edit_docx). Use "
+        "`run_python` only for headers/footers/images that `edit_docx` "
+        "cannot touch, then re-read. Never silently fall back to "
+        "`write_file` or rewrite. Pick one path and finish; do not debate "
+        "tools in the reply."
     )
 
     @field_validator("upstream")

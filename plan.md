@@ -19,6 +19,7 @@ This is the index. Each feature has a full build spec in `plan/`, covering:
 | F5 | Saved prompts with `{{variables}}` | [plan/F5-saved-prompts.md](plan/F5-saved-prompts.md) | M · 2–3 d | yes | yes | – |
 | F6 | Voice input | [plan/F6-voice-input.md](plan/F6-voice-input.md) | S–M · 1–2 d | none | – | – |
 | F7 | Scheduled runs (Automations) | [plan/F7-scheduled-runs.md](plan/F7-scheduled-runs.md) | L · 6–8 d | yes | yes | – |
+| — | DOCX `edit_docx` (Phase 1 done; soak → Phase 2) | [plan/edit-docx.md](plan/edit-docx.md) | L | yes | yes | – |
 
 ## Milestones (build order)
 

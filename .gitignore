@@ -19,6 +19,9 @@ uploads/
 .env.*
 !.env.example
 
+# Live e2e transcripts may include model chatter + skill bodies; keep pass rates only.
+tests/fixtures/edit_docx_e2e/transcripts/
+
 # Editor / OS
 .DS_Store
 .idea/
