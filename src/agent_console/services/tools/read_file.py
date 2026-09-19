@@ -59,8 +59,8 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             row = await files.get(user_id, name)
             if row.name.lower().endswith(".docx"):
                 data = await files.raw_bytes(user_id, str(row.id))
-                # Fresh generation until edit_docx / convert persist manifests.
-                manifest = assign_fresh_manifest(data, generation=1)
+                generation = int(getattr(row, "block_generation", None) or 1)
+                manifest = assign_fresh_manifest(data, generation=generation)
                 return _window(
                     format_annotated(manifest),
                     max_chars,

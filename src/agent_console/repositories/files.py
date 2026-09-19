@@ -90,6 +90,7 @@ class FileRepository:
         parent_id: UUID | None = None,
         derived_from: UUID | None = None,
         from_convert: bool = False,
+        block_generation: int | None = None,
     ) -> StoredFileRow:
         if len(data) > self._max_bytes:
             raise FileTooLargeError(
@@ -98,12 +99,17 @@ class FileRepository:
 
         root_id: UUID | None = None
         version = 1
+        generation = 1 if block_generation is None else max(1, int(block_generation))
         if parent_id is not None:
             parent = await self._session.get(StoredFileRow, parent_id)
             if parent is None or parent.user_id != user_id:
                 raise UnknownFileError(f"no uploaded file matches parent {parent_id}")
             root_id = parent.root_id or parent.id
             version = (parent.version or 1) + 1
+            if block_generation is None:
+                # Tip edits inherit; callers that rebuild (convert / run_python)
+                # pass an explicit bumped value.
+                generation = parent.block_generation or 1
 
         # Only convert may claim markdown/text provenance. Tip edits that
         # pass derived_from=md would defeat the convert overwrite guard —
@@ -144,6 +150,7 @@ class FileRepository:
             derived_from=derived_from,
             root_id=root_id,
             version=version,
+            block_generation=generation,
         )
         self._session.add(row)
         try:

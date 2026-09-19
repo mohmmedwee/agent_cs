@@ -247,6 +247,8 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             cache = cwd / _CACHE_DIR
             cache.mkdir()
             staged: set[str] = set()
+            # DOCX tips staged as inputs — used for output lineage.
+            docx_tips: list = []
 
             for ref in input_names:
                 try:
@@ -259,6 +261,9 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                     return f"Error: cannot stage input named {target.name!r}."
                 target.write_bytes(data)
                 staged.add(target.name)
+                if row.name.lower().endswith(".docx"):
+                    tip = await files.latest_in_chain(user_id, str(row.id))
+                    docx_tips.append(tip)
 
             (cwd / _SCRIPT_NAME).write_text(source, encoding="utf-8")
             (cwd / _RUNNER_NAME).write_text(_runner_source(mem_bytes), encoding="utf-8")
@@ -338,14 +343,23 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             for path in produced[:_MAX_OUTPUT_FILES]:
                 try:
                     data = path.read_bytes()
+                    parent_id = None
+                    block_generation = 1
+                    if path.suffix.lower() == ".docx" and len(docx_tips) == 1:
+                        tip = docx_tips[0]
+                        parent_id = tip.id
+                        block_generation = (tip.block_generation or 1) + 1
                     row = await files.save(
                         user_id,
                         name=path.name,
                         data=data,
                         content_type=_guess_type(path),
+                        parent_id=parent_id,
+                        block_generation=block_generation,
                     )
                     saved.append(
-                        f"{row.name} ({row.size} bytes) — "
+                        f"{row.name} ({row.size} bytes) "
+                        f"g{row.block_generation} — "
                         f"/api/files/{row.id}/download"
                     )
                 except FileTooLargeError as exc:

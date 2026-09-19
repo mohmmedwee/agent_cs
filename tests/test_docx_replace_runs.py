@@ -197,10 +197,11 @@ def test_replace_inside_hyperlink_keeps_relationship() -> None:
 
 
 def test_replace_across_two_runs_is_multi_run_span() -> None:
+    """Different rPr across runs must still reject (identical-rPr is the merge path)."""
     doc = Document()
     p = doc.add_paragraph()
     p.add_run("Hello ")
-    p.add_run("world")
+    p.add_run("world").bold = True
     buf = io.BytesIO()
     doc.save(buf)
     data = buf.getvalue()

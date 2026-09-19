@@ -87,7 +87,8 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             if row.name.lower().endswith(".docx"):
                 try:
                     data = await files.raw_bytes(user_id, str(row.id))
-                    manifest = assign_fresh_manifest(data, generation=1)
+                    generation = int(getattr(row, "block_generation", None) or 1)
+                    manifest = assign_fresh_manifest(data, generation=generation)
                 except (UnknownFileError, ValueError):
                     continue
                 hits_out: list[str] = []

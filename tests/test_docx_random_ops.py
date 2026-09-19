@@ -79,11 +79,20 @@ def _safe_replace_targets(data: bytes, manifest) -> list[tuple[str, str]]:
 def test_randomized_mixed_ops_preserve_package_and_ids(seed: int) -> None:
     rng = random.Random(seed)
     data = _minimal("Alpha", "Beta", "Gamma", "Delta")
+    # Also a cross-run identical-rPr paragraph for merge coverage.
+    doc = Document()
+    for text in ("Alpha", "Beta", "Gamma", "Delta"):
+        doc.add_paragraph(text)
+    p = doc.add_paragraph()
+    p.add_run("Merge")
+    p.add_run("Me")
+    buf = io.BytesIO()
+    doc.save(buf)
+    data = buf.getvalue()
     manifest = assign_fresh_manifest(data, generation=1)
     before_digests = package_entry_digests(data)
 
     ops: list[EditOp] = []
-    # insert chain
     ops.append(
         EditOp(
             op="insert",
@@ -102,12 +111,14 @@ def test_randomized_mixed_ops_preserve_package_and_ids(seed: int) -> None:
             new_id="new_2",
         )
     )
-    # replace on original Alpha (still g1:p_0001 after carry-forward apply)
     ops.append(EditOp(op="replace", block_id="g1:p_0001", old="Alpha", new=f"A{seed}"))
-    # delete Gamma
+    # Cross-run identical-rPr merge
+    merge_block = next(b for b in manifest.blocks if b.text == "MergeMe")
+    ops.append(
+        EditOp(op="replace", block_id=merge_block.id, old="MergeMe", new=f"M{seed}")
+    )
     gamma = next(b for b in manifest.blocks if b.text == "Gamma")
     ops.append(EditOp(op="delete", block_id=gamma.id, hash=gamma.content_hash))
-    # rewrite plain Delta (single formatting)
     delta = next(b for b in manifest.blocks if b.text == "Delta")
     if rng.random() < 0.5:
         ops.append(
@@ -128,8 +139,8 @@ def test_randomized_mixed_ops_preserve_package_and_ids(seed: int) -> None:
     texts = block_texts(out)
     assert f"H{seed}" in texts and f"P{seed}" in texts
     assert f"A{seed}" in texts
+    assert f"M{seed}" in texts
     assert "Gamma" not in texts
-    # IDs for surviving originals still present
     ids = {b.id for b in new_manifest.blocks}
     assert "g1:p_0001" in ids
     assert gamma.id not in ids

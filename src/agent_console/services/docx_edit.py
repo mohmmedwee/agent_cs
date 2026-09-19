@@ -273,9 +273,8 @@ def _assert_single_t_span(span_locs: list[_CharLoc | None]) -> _CharLoc:
     if any(loc.t_node is not first.t_node for loc in typed):
         raise ValidationError(
             "multi_run_span: replace crosses a w:t, run, or hyperlink boundary; "
-            "narrow old so it sits inside one run, or wait for identical-rPr merge"
+            "narrow old so it sits inside one run"
         )
-    # Contiguous offsets inside that w:t.
     offsets = [loc.offset for loc in typed]
     if offsets != list(range(offsets[0], offsets[0] + len(offsets))):
         raise ValidationError(
@@ -284,37 +283,226 @@ def _assert_single_t_span(span_locs: list[_CharLoc | None]) -> _CharLoc:
     return first
 
 
+_RSID_ATTR_SUFFIXES = ("rsid", "rsidR", "rsidRPr", "rsidRDefault", "rsidP", "rsidDel", "rsidTr")
+
+
+def _rpr_compare_key(run: ET.Element) -> str:
+    """Canonical rPr with ``w:rsid*`` stripped — revision IDs must not block merges."""
+    rpr = run.find(f"{_WORD_NS}rPr")
+    if rpr is None:
+        return ""
+    clone = copy.deepcopy(rpr)
+    for el in clone.iter():
+        for attr in list(el.attrib):
+            local = attr.rsplit("}", 1)[-1]
+            if local.startswith("rsid") or local in _RSID_ATTR_SUFFIXES:
+                del el.attrib[attr]
+    return ET.canonicalize(ET.tostring(clone, encoding="unicode"))
+
+
+_FORBIDDEN_BETWEEN_TAGS = frozenset(
+    {
+        f"{_WORD_NS}bookmarkStart",
+        f"{_WORD_NS}bookmarkEnd",
+        f"{_WORD_NS}commentRangeStart",
+        f"{_WORD_NS}commentRangeEnd",
+        f"{_WORD_NS}commentReference",
+        f"{_WORD_NS}fldChar",
+        f"{_WORD_NS}fldSimple",
+        f"{_WORD_NS}hyperlink",
+        f"{_WORD_NS}ins",
+        f"{_WORD_NS}del",
+    }
+)
+
+
+def _paragraph_content_nodes(paragraph: ET.Element) -> list[ET.Element]:
+    """Direct children of ``w:p``, flattening one level of hyperlink runs."""
+    nodes: list[ET.Element] = []
+    for child in paragraph:
+        if child.tag == f"{_WORD_NS}hyperlink":
+            nodes.append(child)
+            nodes.extend(list(child))
+        else:
+            nodes.append(child)
+    return nodes
+
+
+def _runs_in_span(span_locs: list[_CharLoc]) -> list[ET.Element]:
+    runs: list[ET.Element] = []
+    seen: set[int] = set()
+    for loc in span_locs:
+        key = id(loc.run)
+        if key not in seen:
+            seen.add(key)
+            runs.append(loc.run)
+    return runs
+
+
+def _span_has_forbidden_between(
+    paragraph: ET.Element, runs: list[ET.Element]
+) -> str | None:
+    """Return a short reason if bookmarks/fields/hyperlink edges sit in the span."""
+    if len(runs) < 2:
+        return None
+    # Distinct hyperlink parents → edge inside the span.
+    parents = _paragraph_parent_map(paragraph)
+    hyper_parents: set[int] = set()
+    for run in runs:
+        parent = parents.get(run)
+        if parent is not None and parent.tag == f"{_WORD_NS}hyperlink":
+            hyper_parents.add(id(parent))
+        else:
+            hyper_parents.add(0)
+    if len(hyper_parents) > 1:
+        return "hyperlink edge"
+    nodes = _paragraph_content_nodes(paragraph)
+    try:
+        first_i = next(i for i, n in enumerate(nodes) if n is runs[0])
+        last_i = next(i for i, n in enumerate(nodes) if n is runs[-1])
+    except StopIteration:
+        return "run not found in paragraph"
+    if last_i < first_i:
+        first_i, last_i = last_i, first_i
+    run_ids = {id(r) for r in runs}
+    for node in nodes[first_i : last_i + 1]:
+        if id(node) in run_ids:
+            continue
+        if node.tag == f"{_WORD_NS}proofErr":
+            continue
+        if node.tag in _FORBIDDEN_BETWEEN_TAGS:
+            return node.tag.rsplit("}", 1)[-1]
+        # Nested markers inside a non-run container between runs.
+        for desc in node.iter():
+            if desc is node:
+                continue
+            if desc.tag in _FORBIDDEN_BETWEEN_TAGS:
+                return desc.tag.rsplit("}", 1)[-1]
+    return None
+
+
+def _drop_proof_err_between(paragraph: ET.Element, runs: list[ET.Element]) -> None:
+    nodes = _paragraph_content_nodes(paragraph)
+    try:
+        first_i = next(i for i, n in enumerate(nodes) if n is runs[0])
+        last_i = next(i for i, n in enumerate(nodes) if n is runs[-1])
+    except StopIteration:
+        return
+    if last_i < first_i:
+        first_i, last_i = last_i, first_i
+    parents = _paragraph_parent_map(paragraph)
+    for node in list(nodes[first_i : last_i + 1]):
+        if node.tag != f"{_WORD_NS}proofErr":
+            continue
+        parent = parents.get(node, paragraph)
+        try:
+            parent.remove(node)
+        except ValueError:
+            pass
+
+
+def _assert_replaceable_span(
+    paragraph: ET.Element, span_locs: list[_CharLoc | None]
+) -> tuple[str, list[_CharLoc]]:
+    """Return ``('single', locs)`` or ``('merge', locs)``; else raise multi_run_span."""
+    if not span_locs:
+        raise ValidationError("multi_run_span: empty match")
+    if any(loc is None for loc in span_locs):
+        raise ValidationError(
+            "multi_run_span: replace would cross a tab or line break; "
+            "narrow old or use rewrite with care"
+        )
+    typed = [loc for loc in span_locs if loc is not None]
+    # Contiguous single w:t?
+    first = typed[0]
+    if all(loc.t_node is first.t_node for loc in typed):
+        offsets = [loc.offset for loc in typed]
+        if offsets == list(range(offsets[0], offsets[0] + len(offsets))):
+            return "single", typed
+
+    runs = _runs_in_span(typed)
+    if len(runs) < 2:
+        raise ValidationError(
+            "multi_run_span: replace crosses a w:t boundary inside one run; "
+            "narrow old so it sits inside one w:t"
+        )
+    keys = {_rpr_compare_key(run) for run in runs}
+    if len(keys) > 1:
+        raise ValidationError(
+            "multi_run_span: replace crosses runs with different formatting "
+            "(rPr); narrow old or use rewrite with allow_format_loss"
+        )
+    reason = _span_has_forbidden_between(paragraph, runs)
+    if reason is not None:
+        raise ValidationError(
+            f"multi_run_span: replace span contains {reason}; "
+            "narrow old so it does not cross bookmarks, comments, fields, "
+            "or hyperlink edges"
+        )
+    return "merge", typed
+
+
 def _check_replace_in_paragraph(
     paragraph: ET.Element, block_text: str, old: str
 ) -> None:
-    """Raise ``multi_run_span`` unless ``old`` sits entirely inside one ``w:t``."""
+    """Raise ``multi_run_span`` unless ``old`` is a single-t or identical-rPr merge."""
     raw, locs = _build_char_map(paragraph)
     start, end = _find_match_span(block_text, old)
     span = _stripped_span(raw, locs, block_text, start, end)
-    _assert_single_t_span(span)
+    _assert_replaceable_span(paragraph, span)
 
 
 def _splice_replace_in_paragraph(
     paragraph: ET.Element, block_text: str, old: str, new: str
 ) -> str:
-    """Splice ``new`` into the single matching ``w:t``; return new block text."""
+    """Splice ``new`` into one ``w:t``, or merge identical-rPr runs; return new text."""
     raw, locs = _build_char_map(paragraph)
     start, end = _find_match_span(block_text, old)
     span = _stripped_span(raw, locs, block_text, start, end)
-    first = _assert_single_t_span(span)
-    t_node = first.t_node
-    text = t_node.text or ""
-    t_start = first.offset
-    t_end = span[-1].offset + 1  # type: ignore[union-attr]
-    updated = text[:t_start] + new + text[t_end:]
-    t_node.text = updated
-    if updated[:1].isspace() or (updated and updated[-1:].isspace()):
-        t_node.set(f"{_XML_NS}space", "preserve")
-    elif f"{_XML_NS}space" in t_node.attrib and not (
-        updated[:1].isspace() or (updated and updated[-1:].isspace())
-    ):
-        # Keep preserve if still needed; otherwise leave as-is when Word set it.
-        pass
+    kind, typed = _assert_replaceable_span(paragraph, span)
+
+    if kind == "single":
+        first = typed[0]
+        t_node = first.t_node
+        text = t_node.text or ""
+        t_start = first.offset
+        t_end = typed[-1].offset + 1
+        updated = text[:t_start] + new + text[t_end:]
+        t_node.text = updated
+        if updated[:1].isspace() or (updated and updated[-1:].isspace()):
+            t_node.set(f"{_XML_NS}space", "preserve")
+        return block_text[:start] + new + block_text[end:]
+
+    # Identical-rPr merge across runs.
+    runs = _runs_in_span(typed)
+    _drop_proof_err_between(paragraph, runs)
+    first_loc, last_loc = typed[0], typed[-1]
+    first_run, last_run = runs[0], runs[-1]
+    prefix = (first_loc.t_node.text or "")[: first_loc.offset]
+    suffix = (last_loc.t_node.text or "")[last_loc.offset + 1 :]
+    # Collapse first run to a single w:t with merged text.
+    for child in list(first_run):
+        if child.tag in {f"{_WORD_NS}t", f"{_WORD_NS}tab", f"{_WORD_NS}br"}:
+            first_run.remove(child)
+    node = ET.SubElement(first_run, f"{_WORD_NS}t")
+    merged = prefix + new + suffix
+    node.text = merged
+    if merged[:1].isspace() or (merged and merged[-1:].isspace()):
+        node.set(f"{_XML_NS}space", "preserve")
+
+    parents = _paragraph_parent_map(paragraph)
+    for run in runs[1:]:
+        parent = parents.get(run)
+        if parent is not None:
+            try:
+                parent.remove(run)
+            except ValueError:
+                pass
+    # Drop empty hyperlink wrappers left behind.
+    for child in list(paragraph):
+        if child.tag == f"{_WORD_NS}hyperlink" and len(child) == 0:
+            paragraph.remove(child)
+
     return block_text[:start] + new + block_text[end:]
 
 

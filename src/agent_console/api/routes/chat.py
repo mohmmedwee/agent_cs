@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterable
-from pathlib import Path
 from uuid import UUID
 
 import httpx
@@ -47,8 +46,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-
 
 class StopChatRequest(BaseModel):
     conversation_id: UUID
@@ -56,11 +53,6 @@ class StopChatRequest(BaseModel):
 
 class WatchChatRequest(BaseModel):
     conversation_id: UUID
-
-
-def _upload_dir(settings) -> Path:
-    path = Path(settings.upload_dir)
-    return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 @router.post("/chat", response_model=None)
@@ -111,7 +103,6 @@ async def chat(
     text_parts: list[str] = []
     conversation_key = str(request.conversation_id)
     cancel = asyncio.Event()
-    upload_dir = _upload_dir(settings)
 
     async def produce() -> None:
         # Own session for the whole run — must outlive the HTTP request that
@@ -120,7 +111,7 @@ async def chat(
         try:
             async with factory() as session:
                 files = FileRepository(
-                    session, upload_dir, settings.max_upload_bytes
+                    session, state.blob_store, settings.max_upload_bytes
                 )
                 memories = MemoryRepository(
                     session,

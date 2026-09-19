@@ -157,6 +157,11 @@ class StoredFileRow(Base):
         nullable=True,
     )
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # edit_docx block-id generation. Bumps on convert rebuild / run_python
+    # rewrite so stale gN: ids fail closed; tip edits keep the parent value.
+    block_generation: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1"
+    )
     uploaded_at: Mapped[datetime] = timestamp_column()
 
     user: Mapped[User] = relationship(back_populates="files")

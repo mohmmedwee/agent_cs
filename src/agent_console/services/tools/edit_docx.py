@@ -86,7 +86,16 @@ async def prepare_edit_docx_approval(
 
     try:
         ops = _parse_ops(args.get("operations"))
-        generation = int(args.get("generation") or 1)
+        # Prefer tip's stored generation; argument is a fallback for older clients.
+        tip_gen = int(getattr(tip, "block_generation", None) or 1)
+        generation = int(args.get("generation") or tip_gen)
+        if generation != tip_gen:
+            return (
+                None,
+                None,
+                f"Error: generation g{generation} does not match tip g{tip_gen}; "
+                "re-read the document and use current ids",
+            )
         manifest = assign_fresh_manifest(data, generation=generation)
         result = validate_ops(manifest, ops, data=data)
     except (ValidationError, ValueError, TypeError) as exc:
@@ -143,7 +152,13 @@ async def apply_edit_docx_payload(
 
     try:
         ops = ops_from_payload(payload)
-        gen = int(payload.get("generation") or 1)
+        tip_gen = int(getattr(tip, "block_generation", None) or 1)
+        gen = int(payload.get("generation") or tip_gen)
+        if gen != tip_gen:
+            return (
+                "Error: document changed, nothing applied "
+                f"(generation g{gen} ≠ tip g{tip_gen}). Re-read and try again."
+            )
         manifest = assign_fresh_manifest(data, generation=gen)
         validate_ops(manifest, ops, data=data)
         out, new_manifest, diffs = apply_ops(data, manifest, ops)
@@ -163,6 +178,7 @@ async def apply_edit_docx_payload(
             content_type=DOCX_MEDIA_TYPE,
             parent_id=tip.id,
             derived_from=tip.id,
+            block_generation=int(getattr(tip, "block_generation", None) or 1),
         )
     except FileTooLargeError as exc:
         return f"Error: {exc}"
@@ -223,22 +239,24 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
     async def edit_docx(
         name: str,
         operations: list[dict[str, Any]] | None = None,
-        generation: int = 1,
+        generation: int | None = None,
     ) -> str:
+        tip = await files.latest_in_chain(user_id, name)
+        tip_gen = int(getattr(tip, "block_generation", None) or 1)
+        gen = tip_gen if generation is None else int(generation)
         # Direct invoke (tests / auto-approve): validate and apply without payload.
         _, _, err = await prepare_edit_docx_approval(
             files,
             user_id,
             json.dumps(
-                {"name": name, "operations": operations or [], "generation": generation}
+                {"name": name, "operations": operations or [], "generation": gen}
             ),
         )
         if err:
             return err
-        tip = await files.latest_in_chain(user_id, name)
         data = await files.raw_bytes(user_id, str(tip.id))
         ops = _parse_ops(operations)
-        manifest = assign_fresh_manifest(data, generation=int(generation or 1))
+        manifest = assign_fresh_manifest(data, generation=gen)
         try:
             out, new_manifest, diffs = apply_ops(data, manifest, ops)
             saved = await files.save(
@@ -248,6 +266,7 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                 content_type=DOCX_MEDIA_TYPE,
                 parent_id=tip.id,
                 derived_from=tip.id,
+                block_generation=tip_gen,
             )
         except ValidationError as exc:
             return f"Error: {exc}"
