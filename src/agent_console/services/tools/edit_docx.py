@@ -87,7 +87,7 @@ async def prepare_edit_docx_approval(
         ops = _parse_ops(args.get("operations"))
         generation = int(args.get("generation") or 1)
         manifest = assign_fresh_manifest(data, generation=generation)
-        result = validate_ops(manifest, ops)
+        result = validate_ops(manifest, ops, data=data)
     except (ValidationError, ValueError, TypeError) as exc:
         return None, None, f"Error: {exc}"
 
@@ -143,7 +143,7 @@ async def apply_edit_docx_payload(
         ops = ops_from_payload(payload)
         gen = int(payload.get("generation") or 1)
         manifest = assign_fresh_manifest(data, generation=gen)
-        validate_ops(manifest, ops)
+        validate_ops(manifest, ops, data=data)
         out, new_manifest, diffs = apply_ops(data, manifest, ops)
     except ValidationError as exc:
         return (
@@ -181,6 +181,9 @@ async def apply_edit_docx_payload(
 
 
 def register(registry: ToolRegistry, context: ToolContext) -> None:
+    # Off until run-level replace is verified — see settings.edit_docx_enabled.
+    if not context.settings.edit_docx_enabled:
+        return
     files = context.files
     user_id = context.user_id
 
@@ -188,8 +191,12 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         name="edit_docx",
         description=(
             "Edit an uploaded .docx by block id (from annotated read/search). "
-            "Ops: replace, rewrite, insert, delete. Requires approval; the "
-            "server shows a plaintext diff before applying."
+            "Ops: replace (must sit inside one w:t), rewrite, insert, delete. "
+            "Insert chains: declare new_id as new_<digits> and relative_to a "
+            "prior new_id in the same batch "
+            '(e.g. insert relative_to=g1:p_0001 new_id=new_1, then '
+            "relative_to=new_1). Requires approval; server shows a plaintext "
+            "diff before applying."
         ),
         parameters={
             "type": "object",

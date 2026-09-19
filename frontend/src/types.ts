@@ -151,4 +151,5 @@ export interface Health {
   upstream: string
   error: string | null
   context_window?: number | null
+  revision?: string | null
 }

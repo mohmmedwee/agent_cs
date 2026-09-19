@@ -11,3 +11,5 @@ class HealthResponse(BaseModel):
     model: str | None = None
     error: str | None = None
     context_window: int | None = None
+    # Short git SHA of the process tree (None if not a checkout).
+    revision: str | None = None

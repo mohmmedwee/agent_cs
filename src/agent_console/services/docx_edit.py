@@ -4,10 +4,15 @@ Dry-run validation builds plaintext diffs. Apply mutates only
 `word/document.xml` and rebuilds the package by copying every other zip
 entry byte-for-byte. Re-validate at apply time from the tip — do not trust
 in-memory XML from an earlier approval payload.
+
+``replace`` splices a single ``w:t`` in place. Spans that cross a ``w:t``,
+run, hyperlink, tab, or break boundary are rejected as ``multi_run_span``.
+``rewrite`` is the only op that rebuilds paragraph text runs.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
 import re
@@ -33,6 +38,7 @@ __all__ = [
 _WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _XML_NS = "{http://www.w3.org/XML/1998/namespace}"
 _BLOCK_ID_RE = re.compile(r"^g(\d+):p_(\d{4})$")
+_TEMP_ID_RE = re.compile(r"^new_(\d+)$")
 _DOCUMENT_XML = "word/document.xml"
 
 
@@ -64,6 +70,7 @@ class BlockDiff:
 class ValidationResult:
     ok: bool = True
     diffs: list[BlockDiff] = field(default_factory=list)
+    temp_id_map: dict[str, str] = field(default_factory=dict)
 
     def plaintext(self) -> str:
         lines: list[str] = []
@@ -74,9 +81,22 @@ class ValidationResult:
         return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class _CharLoc:
+    """One character of joined paragraph text that lives inside a ``w:t``."""
+
+    run: ET.Element
+    t_node: ET.Element
+    offset: int
+
+
 def _parse_generation(block_id: str) -> int | None:
     match = _BLOCK_ID_RE.match(block_id)
     return int(match.group(1)) if match else None
+
+
+def _is_temp_id(block_id: str) -> bool:
+    return bool(_TEMP_ID_RE.match(block_id))
 
 
 def _require_block(manifest: Manifest, block_id: str) -> Block:
@@ -92,13 +112,63 @@ def _require_block(manifest: Manifest, block_id: str) -> Block:
     raise ValidationError(f"unknown block id {block_id!r}; re-read the document")
 
 
-def _replace_once(text: str, old: str, new: str) -> str:
-    """Exact Unicode; Latin letters match case-insensitively for the find."""
+def _reject_temp_as_target(block_id: str | None) -> None:
+    if block_id and _is_temp_id(block_id):
+        raise ValidationError(
+            f"temp id {block_id!r} cannot be the target of replace/rewrite/delete; "
+            "only insert may declare and relative_to may reference temp ids"
+        )
+    if block_id and block_id.startswith("g") and ":new_" in block_id:
+        raise ValidationError(
+            f"temp IDs don't take a generation (got {block_id!r}); use new_<digits>"
+        )
+
+
+def _parse_new_id(raw: str | None, *, insert_seq: int, declared: set[str]) -> str:
+    if raw is None or raw == "":
+        candidate = f"new_{insert_seq}"
+        while candidate in declared:
+            insert_seq += 1
+            candidate = f"new_{insert_seq}"
+        return candidate
+    if _is_temp_id(raw):
+        if raw in declared:
+            raise ValidationError(f"duplicate temp id {raw!r}")
+        return raw
+    if _BLOCK_ID_RE.match(raw) or ":new_" in raw:
+        raise ValidationError(
+            f"temp IDs don't take a generation (got {raw!r}); use new_<digits>"
+        )
+    raise ValidationError(
+        f"insert new_id must match new_<digits> (got {raw!r})"
+    )
+
+
+def _resolve_relative_to(
+    relative_to: str, *, manifest: Manifest, declared: set[str]
+) -> None:
+    if _is_temp_id(relative_to):
+        if relative_to not in declared:
+            raise ValidationError(
+                f"forward or unknown temp id {relative_to!r}; declare it with "
+                "new_id on an earlier insert in this batch"
+            )
+        return
+    if relative_to.startswith("g") and ":new_" in relative_to:
+        raise ValidationError(
+            f"temp IDs don't take a generation (got {relative_to!r}); use new_<digits>"
+        )
+    _require_block(manifest, relative_to)
+
+
+def _find_match_span(text: str, old: str) -> tuple[int, int]:
+    """Return ``[start, end)`` of the single match for ``old`` in ``text``."""
     if not old:
         raise ValidationError("replace old text must be non-empty")
     exact_count = text.count(old)
     if exact_count == 1:
-        return text.replace(old, new, 1)
+        start = text.index(old)
+        return start, start + len(old)
     if exact_count > 1:
         raise ValidationError(
             f"replace old text has {exact_count} matches; refine old or use count later"
@@ -112,20 +182,174 @@ def _replace_once(text: str, old: str, new: str) -> str:
             f"replace old text has {len(matches)} matches; refine old or use count later"
         )
     m = matches[0]
-    return text[: m.start()] + new + text[m.end() :]
+    return m.start(), m.end()
 
 
-def validate_ops(manifest: Manifest, ops: list[EditOp]) -> ValidationResult:
+def _replace_once(text: str, old: str, new: str) -> str:
+    start, end = _find_match_span(text, old)
+    return text[:start] + new + text[end:]
+
+
+def _paragraph_parent_map(paragraph: ET.Element) -> dict[ET.Element, ET.Element]:
+    parents: dict[ET.Element, ET.Element] = {}
+    for parent in paragraph.iter():
+        for child in parent:
+            parents[child] = parent
+    return parents
+
+
+def _owning_run(
+    t_node: ET.Element, parents: dict[ET.Element, ET.Element]
+) -> ET.Element | None:
+    el: ET.Element | None = t_node
+    while el is not None:
+        if el.tag == f"{_WORD_NS}r":
+            return el
+        el = parents.get(el)
+    return None
+
+
+def _build_char_map(
+    paragraph: ET.Element,
+) -> tuple[str, list[_CharLoc | None]]:
+    """Joined paragraph text (pre-strip) and per-character locations.
+
+    Join rules match ``docx_blocks.parse_document_xml`` (``w:t`` / ``w:tab`` /
+    ``w:br``). Characters that are not inside a ``w:t`` (tabs, breaks) map to
+    ``None`` and cannot be spliced.
+    """
+    parents = _paragraph_parent_map(paragraph)
+    locs: list[_CharLoc | None] = []
+    parts: list[str] = []
+    for node in paragraph.iter():
+        tag = node.tag
+        if tag == f"{_WORD_NS}t":
+            text = node.text or ""
+            run = _owning_run(node, parents)
+            if run is None:
+                for _ch in text:
+                    parts.append(_ch)
+                    locs.append(None)
+                continue
+            for offset, ch in enumerate(text):
+                parts.append(ch)
+                locs.append(_CharLoc(run=run, t_node=node, offset=offset))
+        elif tag == f"{_WORD_NS}tab":
+            parts.append("\t")
+            locs.append(None)
+        elif tag == f"{_WORD_NS}br":
+            parts.append("\n")
+            locs.append(None)
+    return "".join(parts), locs
+
+
+def _stripped_span(
+    raw: str, locs: list[_CharLoc | None], block_text: str, start: int, end: int
+) -> list[_CharLoc | None]:
+    """Map a ``[start, end)`` span in stripped ``block_text`` onto char locs."""
+    stripped = raw.strip()
+    if stripped != block_text:
+        raise ValidationError(
+            "paragraph text map does not match manifest; re-read the document"
+        )
+    left = len(raw) - len(raw.lstrip())
+    return locs[left + start : left + end]
+
+
+def _assert_single_t_span(span_locs: list[_CharLoc | None]) -> _CharLoc:
+    """Require every matched character to live in the same ``w:t``."""
+    if not span_locs:
+        raise ValidationError("multi_run_span: empty match")
+    if any(loc is None for loc in span_locs):
+        raise ValidationError(
+            "multi_run_span: replace would cross a tab or line break; "
+            "narrow old or use rewrite with care"
+        )
+    typed = [loc for loc in span_locs if loc is not None]
+    first = typed[0]
+    if any(loc.t_node is not first.t_node for loc in typed):
+        raise ValidationError(
+            "multi_run_span: replace crosses a w:t, run, or hyperlink boundary; "
+            "narrow old so it sits inside one run, or wait for identical-rPr merge"
+        )
+    # Contiguous offsets inside that w:t.
+    offsets = [loc.offset for loc in typed]
+    if offsets != list(range(offsets[0], offsets[0] + len(offsets))):
+        raise ValidationError(
+            "multi_run_span: replace match is not contiguous inside one w:t"
+        )
+    return first
+
+
+def _check_replace_in_paragraph(
+    paragraph: ET.Element, block_text: str, old: str
+) -> None:
+    """Raise ``multi_run_span`` unless ``old`` sits entirely inside one ``w:t``."""
+    raw, locs = _build_char_map(paragraph)
+    start, end = _find_match_span(block_text, old)
+    span = _stripped_span(raw, locs, block_text, start, end)
+    _assert_single_t_span(span)
+
+
+def _splice_replace_in_paragraph(
+    paragraph: ET.Element, block_text: str, old: str, new: str
+) -> str:
+    """Splice ``new`` into the single matching ``w:t``; return new block text."""
+    raw, locs = _build_char_map(paragraph)
+    start, end = _find_match_span(block_text, old)
+    span = _stripped_span(raw, locs, block_text, start, end)
+    first = _assert_single_t_span(span)
+    t_node = first.t_node
+    text = t_node.text or ""
+    t_start = first.offset
+    t_end = span[-1].offset + 1  # type: ignore[union-attr]
+    updated = text[:t_start] + new + text[t_end:]
+    t_node.text = updated
+    if updated[:1].isspace() or (updated and updated[-1:].isspace()):
+        t_node.set(f"{_XML_NS}space", "preserve")
+    elif f"{_XML_NS}space" in t_node.attrib and not (
+        updated[:1].isspace() or (updated and updated[-1:].isspace())
+    ):
+        # Keep preserve if still needed; otherwise leave as-is when Word set it.
+        pass
+    return block_text[:start] + new + block_text[end:]
+
+
+def _paragraphs_and_root(data: bytes) -> tuple[list[ET.Element], ET.Element]:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        document_xml = zf.read(_DOCUMENT_XML)
+    root = ET.fromstring(document_xml)
+    return list(root.iter(f"{_WORD_NS}p")), root
+
+
+def validate_ops(
+    manifest: Manifest, ops: list[EditOp], *, data: bytes | None = None
+) -> ValidationResult:
     """Validate ops against the tip manifest and return plaintext diffs.
 
+    When ``data`` is provided, ``replace`` ops are also checked against the
+    paragraph XML so ``multi_run_span`` fails before the approval card is shown.
     Does not mutate XML or the manifest.
     """
     if not ops:
         raise ValidationError("no operations provided")
 
+    paragraphs: list[ET.Element] | None = None
+    if data is not None:
+        paragraphs, _ = _paragraphs_and_root(data)
+        if len(paragraphs) != len(manifest.blocks):
+            raise ValidationError(
+                f"manifest/paragraph count mismatch "
+                f"({len(manifest.blocks)} vs {len(paragraphs)}); re-read the document"
+            )
+
     diffs: list[BlockDiff] = []
     texts: dict[str, str] = {b.id: b.text for b in manifest.blocks}
     hashes: dict[str, str] = {b.id: b.content_hash for b in manifest.blocks}
+    declared: set[str] = set()
+    temp_id_map: dict[str, str] = {}
+    next_id = manifest.next_id
+    generation = manifest.generation
     insert_seq = 0
 
     for op in ops:
@@ -133,15 +357,21 @@ def validate_ops(manifest: Manifest, ops: list[EditOp]) -> ValidationResult:
         if kind == "replace":
             if not op.block_id or op.old is None or op.new is None:
                 raise ValidationError("replace requires block_id, old, and new")
+            _reject_temp_as_target(op.block_id)
             block = _require_block(manifest, op.block_id)
             before = texts[block.id]
             after = _replace_once(before, op.old, op.new)
+            if paragraphs is not None:
+                _check_replace_in_paragraph(
+                    paragraphs[block.index], before, op.old
+                )
             texts[block.id] = after
             diffs.append(BlockDiff(block_id=block.id, before=before, after=after))
 
         elif kind == "rewrite":
             if not op.block_id or op.content is None or not op.hash:
                 raise ValidationError("rewrite requires block_id, content, and hash")
+            _reject_temp_as_target(op.block_id)
             block = _require_block(manifest, op.block_id)
             if op.hash != hashes[block.id]:
                 raise ValidationError(
@@ -156,6 +386,7 @@ def validate_ops(manifest: Manifest, ops: list[EditOp]) -> ValidationResult:
         elif kind == "delete":
             if not op.block_id or not op.hash:
                 raise ValidationError("delete requires block_id and hash")
+            _reject_temp_as_target(op.block_id)
             block = _require_block(manifest, op.block_id)
             if op.hash != hashes[block.id]:
                 raise ValidationError(
@@ -172,15 +403,21 @@ def validate_ops(manifest: Manifest, ops: list[EditOp]) -> ValidationResult:
             position = op.position or "after"
             if position not in ("before", "after"):
                 raise ValidationError("insert position must be 'before' or 'after'")
-            _require_block(manifest, op.relative_to)
+            _resolve_relative_to(op.relative_to, manifest=manifest, declared=declared)
             insert_seq += 1
-            temp_id = op.new_id or f"new_{insert_seq}"
-            diffs.append(BlockDiff(block_id=temp_id, before="", after=op.content))
+            temp_id = _parse_new_id(op.new_id, insert_seq=insert_seq, declared=declared)
+            declared.add(temp_id)
+            real_id = f"g{generation}:p_{next_id:04d}"
+            next_id += 1
+            temp_id_map[temp_id] = real_id
+            texts[temp_id] = op.content
+            texts[real_id] = op.content
+            diffs.append(BlockDiff(block_id=real_id, before="", after=op.content))
 
         else:
             raise ValidationError(f"unknown op {kind!r}")
 
-    return ValidationResult(ok=True, diffs=diffs)
+    return ValidationResult(ok=True, diffs=diffs, temp_id_map=temp_id_map)
 
 
 def package_entry_digests(data: bytes) -> dict[str, str]:
@@ -213,12 +450,27 @@ def _is_sole_paragraph_in_table_cell(
     return len(siblings) == 1
 
 
-def _set_paragraph_text(paragraph: ET.Element, text: str) -> None:
-    """Write plain text; ``\\n`` becomes ``w:br``; leading/trailing spaces preserved.
+def _first_run_rpr(paragraph: ET.Element) -> ET.Element | None:
+    for child in paragraph:
+        if child.tag == f"{_WORD_NS}r":
+            rpr = child.find(f"{_WORD_NS}rPr")
+            return copy.deepcopy(rpr) if rpr is not None else None
+        if child.tag == f"{_WORD_NS}hyperlink":
+            for run in child:
+                if run.tag == f"{_WORD_NS}r":
+                    rpr = run.find(f"{_WORD_NS}rPr")
+                    return copy.deepcopy(rpr) if rpr is not None else None
+    return None
 
-    ElementTree escapes ``<>&`` on serialize. Existing runs/hyperlinks are replaced
-    so we never leave literal newlines inside ``w:t``.
+
+def _set_paragraph_text(paragraph: ET.Element, text: str) -> None:
+    """Rewrite paragraph body text for ``rewrite`` only.
+
+    Keeps ``pPr`` and non-run markers (bookmarks, comment ranges). Removes
+    existing ``w:r`` / ``w:hyperlink`` children and writes new runs that carry
+    the first prior run's ``rPr`` when present. ``\\n`` becomes ``w:br``.
     """
+    first_rpr = _first_run_rpr(paragraph)
     for child in list(paragraph):
         if child.tag in {f"{_WORD_NS}r", f"{_WORD_NS}hyperlink"}:
             paragraph.remove(child)
@@ -226,11 +478,13 @@ def _set_paragraph_text(paragraph: ET.Element, text: str) -> None:
     parts = text.split("\n")
     for index, part in enumerate(parts):
         run = ET.SubElement(paragraph, f"{_WORD_NS}r")
+        if first_rpr is not None:
+            run.insert(0, copy.deepcopy(first_rpr))
         if index > 0:
             ET.SubElement(run, f"{_WORD_NS}br")
         node = ET.SubElement(run, f"{_WORD_NS}t")
         node.text = part
-        if part[:1].isspace() or part[-1:].isspace():
+        if part[:1].isspace() or (part and part[-1:].isspace()):
             node.set(f"{_XML_NS}space", "preserve")
 
 
@@ -265,12 +519,9 @@ def apply_ops(
     Callers must re-build `manifest` from the tip immediately before this — never
     reuse a parsed document stashed in an approval payload.
     """
-    result = validate_ops(manifest, ops)
+    result = validate_ops(manifest, ops, data=data)
 
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        document_xml = zf.read(_DOCUMENT_XML)
-    root = ET.fromstring(document_xml)
-    paragraphs = list(root.iter(f"{_WORD_NS}p"))
+    paragraphs, root = _paragraphs_and_root(data)
     if len(paragraphs) != len(manifest.blocks):
         raise ValidationError(
             f"manifest/paragraph count mismatch "
@@ -286,13 +537,19 @@ def apply_ops(
     next_id = manifest.next_id
     generation = manifest.generation
     apply_diffs: list[BlockDiff] = []
+    temp_id_map: dict[str, str] = {}
+    insert_seq = 0
+    declared: set[str] = set()
+    # Real IDs assigned in operation order (not document order).
+    temps_in_op_order: list[str] = []
 
     for op in ops:
         if op.op == "replace":
             assert op.block_id and op.old is not None and op.new is not None
             before = texts[op.block_id]
-            after = _replace_once(before, op.old, op.new)
-            _set_paragraph_text(id_to_el[op.block_id], after)
+            after = _splice_replace_in_paragraph(
+                id_to_el[op.block_id], before, op.old, op.new
+            )
             texts[op.block_id] = after
             apply_diffs.append(BlockDiff(block_id=op.block_id, before=before, after=after))
 
@@ -328,13 +585,19 @@ def apply_ops(
         elif op.op == "insert":
             assert op.relative_to and op.content is not None
             position = op.position or "after"
+            insert_seq += 1
+            temp_id = _parse_new_id(op.new_id, insert_seq=insert_seq, declared=declared)
+            declared.add(temp_id)
+            if op.relative_to not in id_to_el:
+                raise ValidationError(
+                    f"unknown relative_to {op.relative_to!r}; re-read the document"
+                )
             anchor = id_to_el[op.relative_to]
             parent = parents[anchor]
             new_el = _make_paragraph(op.content)
             children = list(parent)
             anchor_idx = children.index(anchor)
             insert_at = anchor_idx if position == "before" else anchor_idx + 1
-            # Keep body-level or paragraph-level sectPr after all paragraphs.
             if (
                 position == "after"
                 and parent.tag == f"{_WORD_NS}body"
@@ -342,17 +605,19 @@ def apply_ops(
             ):
                 insert_at = anchor_idx
             elif position == "after" and parent.tag == f"{_WORD_NS}body":
-                # python-docx puts sectPr as a direct body child after the last p.
-                following = children[anchor_idx + 1 :] if anchor_idx + 1 < len(children) else []
+                following = (
+                    children[anchor_idx + 1 :] if anchor_idx + 1 < len(children) else []
+                )
                 if any(c.tag == f"{_WORD_NS}sectPr" for c in following):
-                    # Insert still after anchor p; sectPr stays last among body kids.
                     insert_at = anchor_idx + 1
             parent.insert(insert_at, new_el)
             parents[new_el] = parent
-            new_block_id = f"g{generation}:p_{next_id:04d}"
-            next_id += 1
-            id_to_el[new_block_id] = new_el
-            texts[new_block_id] = op.content
+            id_to_el[temp_id] = new_el
+            texts[temp_id] = op.content
+            if op.relative_to not in order:
+                raise ValidationError(
+                    f"relative_to {op.relative_to!r} missing from block order"
+                )
             rel_idx = order.index(op.relative_to)
             order_at = rel_idx if position == "before" else rel_idx + 1
             if (
@@ -361,10 +626,28 @@ def apply_ops(
                 and parent.tag == f"{_WORD_NS}body"
             ):
                 order_at = rel_idx
-            order.insert(order_at, new_block_id)
-            apply_diffs.append(
-                BlockDiff(block_id=new_block_id, before="", after=op.content)
-            )
+            order.insert(order_at, temp_id)
+            temps_in_op_order.append(temp_id)
+            apply_diffs.append(BlockDiff(block_id=temp_id, before="", after=op.content))
+
+    # Commit: assign real IDs from next_id in *operation* order.
+    for temp_id in temps_in_op_order:
+        real_id = f"g{generation}:p_{next_id:04d}"
+        next_id += 1
+        temp_id_map[temp_id] = real_id
+        el = id_to_el.pop(temp_id)
+        id_to_el[real_id] = el
+        texts[real_id] = texts.pop(temp_id)
+        order[order.index(temp_id)] = real_id
+
+    apply_diffs = [
+        BlockDiff(
+            block_id=temp_id_map.get(d.block_id, d.block_id),
+            before=d.before,
+            after=d.after,
+        )
+        for d in apply_diffs
+    ]
 
     new_xml = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     out = _rewrite_package(data, new_xml)
@@ -381,6 +664,8 @@ def apply_ops(
         generation=generation, next_id=next_id, blocks=new_blocks
     )
     assert len(apply_diffs) == len(result.diffs)
+    # Validate and apply must agree on real IDs for inserts.
+    assert [d.block_id for d in apply_diffs] == [d.block_id for d in result.diffs]
     return out, new_manifest, apply_diffs
 
 

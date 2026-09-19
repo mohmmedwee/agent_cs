@@ -154,6 +154,13 @@ class Settings(BaseSettings):
         description="Max characters for one user-memory note.",
     )
 
+    edit_docx_enabled: bool = Field(
+        default=True,
+        description=(
+            "Register the edit_docx tool. Set false to hide it from the agent "
+            "(e.g. while investigating formatting bugs)."
+        ),
+    )
     approval_required_tools: set[str] = Field(
         default_factory=lambda: {
             "write_file",
