@@ -1,24 +1,36 @@
-"""Validate `edit_docx` operations and build plaintext diffs (dry-run).
+"""Validate and apply `edit_docx` operations.
 
-No XML writes here — the executor (slice 4) applies ops after approval.
+Dry-run validation builds plaintext diffs. Apply mutates only
+`word/document.xml` and rebuilds the package by copying every other zip
+entry byte-for-byte. Re-validate at apply time from the tip — do not trust
+in-memory XML from an earlier approval payload.
 """
 
 from __future__ import annotations
 
+import hashlib
+import io
 import re
+import zipfile
 from dataclasses import dataclass, field
+from xml.etree import ElementTree as ET
 
-from agent_console.services.docx_blocks import Block, Manifest
+from agent_console.services.docx_blocks import Block, Manifest, content_hash
 
 __all__ = [
     "BlockDiff",
     "EditOp",
     "ValidationError",
     "ValidationResult",
+    "apply_ops",
+    "package_entry_digests",
     "validate_ops",
 ]
 
+_WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_XML_NS = "{http://www.w3.org/XML/1998/namespace}"
 _BLOCK_ID_RE = re.compile(r"^g(\d+):p_(\d{4})$")
+_DOCUMENT_XML = "word/document.xml"
 
 
 class ValidationError(ValueError):
@@ -171,3 +183,155 @@ def validate_ops(manifest: Manifest, ops: list[EditOp]) -> ValidationResult:
             raise ValidationError(f"unknown op {kind!r}")
 
     return ValidationResult(ok=True, diffs=diffs)
+
+
+def package_entry_digests(data: bytes) -> dict[str, str]:
+    """SHA-256 of every zip member — used to prove only document.xml changed."""
+    digests: dict[str, str] = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        for info in zf.infolist():
+            digests[info.filename] = hashlib.sha256(zf.read(info.filename)).hexdigest()
+    return digests
+
+
+def _parent_map(root: ET.Element) -> dict[ET.Element, ET.Element]:
+    parents: dict[ET.Element, ET.Element] = {}
+    for parent in root.iter():
+        for child in parent:
+            parents[child] = parent
+    return parents
+
+
+def _set_paragraph_text(paragraph: ET.Element, text: str) -> None:
+    """Write plain text into the paragraph, preferring the first existing `w:t`."""
+    text_nodes = [n for n in paragraph.iter(f"{_WORD_NS}t")]
+    if not text_nodes:
+        run = ET.SubElement(paragraph, f"{_WORD_NS}r")
+        node = ET.SubElement(run, f"{_WORD_NS}t")
+        text_nodes = [node]
+    text_nodes[0].text = text
+    if text[:1].isspace() or text[-1:].isspace():
+        text_nodes[0].set(f"{_XML_NS}space", "preserve")
+    for node in text_nodes[1:]:
+        node.text = ""
+
+
+def _make_paragraph(text: str) -> ET.Element:
+    paragraph = ET.Element(f"{_WORD_NS}p")
+    _set_paragraph_text(paragraph, text)
+    return paragraph
+
+
+def _rewrite_package(data: bytes, document_xml: bytes) -> bytes:
+    """Copy every zip entry unchanged except `word/document.xml`."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data), "r") as src:
+        with zipfile.ZipFile(buffer, "w") as dst:
+            for info in src.infolist():
+                payload = src.read(info.filename)
+                if info.filename == _DOCUMENT_XML:
+                    payload = document_xml
+                copied = zipfile.ZipInfo(filename=info.filename, date_time=info.date_time)
+                copied.compress_type = info.compress_type
+                copied.external_attr = info.external_attr
+                copied.create_system = info.create_system
+                dst.writestr(copied, payload)
+    return buffer.getvalue()
+
+
+def apply_ops(
+    data: bytes, manifest: Manifest, ops: list[EditOp]
+) -> tuple[bytes, Manifest, list[BlockDiff]]:
+    """Apply validated ops; return new package bytes, carry-forward manifest, diffs.
+
+    Callers must re-build `manifest` from the tip immediately before this — never
+    reuse a parsed document stashed in an approval payload.
+    """
+    result = validate_ops(manifest, ops)
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        document_xml = zf.read(_DOCUMENT_XML)
+    root = ET.fromstring(document_xml)
+    paragraphs = list(root.iter(f"{_WORD_NS}p"))
+    if len(paragraphs) != len(manifest.blocks):
+        raise ValidationError(
+            f"manifest/paragraph count mismatch "
+            f"({len(manifest.blocks)} vs {len(paragraphs)}); re-read the document"
+        )
+
+    id_to_el: dict[str, ET.Element] = {
+        block.id: paragraphs[block.index] for block in manifest.blocks
+    }
+    parents = _parent_map(root)
+    order = [block.id for block in manifest.blocks]
+    texts = {block.id: block.text for block in manifest.blocks}
+    next_id = manifest.next_id
+    generation = manifest.generation
+    apply_diffs: list[BlockDiff] = []
+
+    for op in ops:
+        if op.op == "replace":
+            assert op.block_id and op.old is not None and op.new is not None
+            before = texts[op.block_id]
+            after = _replace_once(before, op.old, op.new)
+            _set_paragraph_text(id_to_el[op.block_id], after)
+            texts[op.block_id] = after
+            apply_diffs.append(BlockDiff(block_id=op.block_id, before=before, after=after))
+
+        elif op.op == "rewrite":
+            assert op.block_id and op.content is not None
+            before = texts[op.block_id]
+            after = op.content
+            _set_paragraph_text(id_to_el[op.block_id], after)
+            texts[op.block_id] = after
+            apply_diffs.append(BlockDiff(block_id=op.block_id, before=before, after=after))
+
+        elif op.op == "delete":
+            assert op.block_id
+            el = id_to_el[op.block_id]
+            parent = parents[el]
+            parent.remove(el)
+            before = texts[op.block_id]
+            del id_to_el[op.block_id]
+            del texts[op.block_id]
+            order.remove(op.block_id)
+            apply_diffs.append(BlockDiff(block_id=op.block_id, before=before, after=""))
+
+        elif op.op == "insert":
+            assert op.relative_to and op.content is not None
+            position = op.position or "after"
+            anchor = id_to_el[op.relative_to]
+            parent = parents[anchor]
+            new_el = _make_paragraph(op.content)
+            children = list(parent)
+            anchor_idx = children.index(anchor)
+            insert_at = anchor_idx if position == "before" else anchor_idx + 1
+            parent.insert(insert_at, new_el)
+            parents[new_el] = parent
+            new_block_id = f"g{generation}:p_{next_id:04d}"
+            next_id += 1
+            id_to_el[new_block_id] = new_el
+            texts[new_block_id] = op.content
+            rel_idx = order.index(op.relative_to)
+            order.insert(rel_idx if position == "before" else rel_idx + 1, new_block_id)
+            apply_diffs.append(
+                BlockDiff(block_id=new_block_id, before="", after=op.content)
+            )
+
+    new_xml = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    out = _rewrite_package(data, new_xml)
+    new_blocks = tuple(
+        Block(
+            id=block_id,
+            text=texts[block_id],
+            content_hash=content_hash(texts[block_id]),
+            index=i,
+        )
+        for i, block_id in enumerate(order)
+    )
+    new_manifest = Manifest(
+        generation=generation, next_id=next_id, blocks=new_blocks
+    )
+    # Prefer apply diffs (real insert ids); lengths should match dry-run.
+    assert len(apply_diffs) == len(result.diffs)
+    return out, new_manifest, apply_diffs
