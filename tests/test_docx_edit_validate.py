@@ -133,7 +133,7 @@ def test_insert_relative_to_wrong_generation_rejected() -> None:
         )
 
 
-def test_insert_after_produces_diff_with_temp_id() -> None:
+def test_insert_after_produces_diff_with_real_id() -> None:
     data = _minimal_docx("Anchor")
     manifest = assign_fresh_manifest(data, generation=1)
     result = validate_ops(
@@ -148,6 +148,7 @@ def test_insert_after_produces_diff_with_temp_id() -> None:
         ],
     )
     assert result.ok
-    assert result.diffs[0].block_id.startswith("new_")
+    assert result.diffs[0].block_id == "g1:p_0002"
+    assert result.temp_id_map == {"new_1": "g1:p_0002"}
     assert result.diffs[0].after == "Inserted"
     assert result.diffs[0].before == ""
