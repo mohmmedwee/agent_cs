@@ -11,6 +11,10 @@ import re
 
 from agent_console.repositories.extraction import page_at_offset
 from agent_console.repositories.files import UnknownFileError, UnreadableFileError
+from agent_console.services.docx_blocks import (
+    assign_fresh_manifest,
+    search_blocks,
+)
 from agent_console.services.tools.context import ToolContext
 from agent_console.services.tools.registry import ToolRegistry
 
@@ -42,9 +46,10 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         name="search_uploaded_files",
         description=(
             "Search all uploaded files for a term and get back matching excerpts "
-            "with character offsets (and PDF page numbers when available). Use "
-            "this before read_uploaded_file on a long document: find where the "
-            "answer is, then read that part."
+            "with character offsets (and PDF page numbers when available). DOCX "
+            "hits include `[gN:p_#### h=…]` block ids for edit_docx. Use this "
+            "before read_uploaded_file on a long document: find where the answer "
+            "is, then read that part."
         ),
         parameters={
             "type": "object",
@@ -79,6 +84,27 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
 
         blocks: list[str] = []
         for row in rows:
+            if row.name.lower().endswith(".docx"):
+                try:
+                    data = await files.raw_bytes(user_id, str(row.id))
+                    manifest = assign_fresh_manifest(data, generation=1)
+                except (UnknownFileError, ValueError):
+                    continue
+                hits_out: list[str] = []
+                block_hits = search_blocks(
+                    manifest, needle, max_hits=_MAX_HITS_PER_FILE + 1
+                )
+                more = len(block_hits) > _MAX_HITS_PER_FILE
+                for hit in block_hits[:_MAX_HITS_PER_FILE]:
+                    hits_out.append(
+                        f"  [{hit.block_id} h={hit.content_hash}] "
+                        f"offset {hit.start}: …{hit.excerpt}…"
+                    )
+                if hits_out:
+                    suffix = " (more matches not shown)" if more else ""
+                    blocks.append(f"{row.name}{suffix}\n" + "\n".join(hits_out))
+                continue
+
             try:
                 content = await files.text(user_id, str(row.id))
             except (UnreadableFileError, UnknownFileError):
