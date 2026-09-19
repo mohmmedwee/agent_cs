@@ -290,6 +290,7 @@ function applyEvent(run: ActiveRun, event: AgentEvent): void {
               streaming: false,
               awaitingApproval: true,
               approvalPending: false,
+              approvalCard: event.approval_card ?? block.approvalCard ?? null,
             },
             ...blocks.slice(existing + 1),
           ]
@@ -304,6 +305,7 @@ function applyEvent(run: ActiveRun, event: AgentEvent): void {
             args: clipUi(event.arguments, TOOL_ARGS_UI_CAP),
             streaming: false,
             awaitingApproval: true,
+            approvalCard: event.approval_card ?? null,
           },
         ]
       })

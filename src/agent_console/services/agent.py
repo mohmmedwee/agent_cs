@@ -17,6 +17,7 @@ import httpx
 from agent_console.clients.upstream import UpstreamClient, UpstreamError
 from agent_console.config import Settings
 from agent_console.models.chat import build_tool_message
+from agent_console.repositories.files import FileRepository
 from agent_console.repositories.memory import MemoryRepository
 from agent_console.repositories.skill_catalog import SkillCatalog
 from agent_console.repositories.skills import UnknownSkillError
@@ -34,6 +35,10 @@ from agent_console.models.events import (
 from agent_console.services.approvals import ApprovalBroker
 from agent_console.services.runaway import is_runaway_repetition, trim_runaway_tail
 from agent_console.services.tools import ToolRegistry
+from agent_console.services.tools.edit_docx import (
+    apply_edit_docx_payload,
+    prepare_edit_docx_approval,
+)
 
 __all__ = ["AgentService"]
 
@@ -109,6 +114,7 @@ class AgentService:
         approvals: ApprovalBroker,
         memories: MemoryRepository,
         user_id: UUID,
+        files: FileRepository | None = None,
     ) -> None:
         self._upstream = upstream
         self._tools = tools
@@ -117,6 +123,7 @@ class AgentService:
         self._approvals = approvals
         self._memories = memories
         self._user_id = user_id
+        self._files = files
 
     async def _system_prompt(
         self,
@@ -413,13 +420,36 @@ class AgentService:
                     and name in self._settings.approval_required_tools
                     and name not in skip_approval
                 ):
+                    approval_card = None
+                    approval_payload = None
+                    if name == "edit_docx" and self._files is not None:
+                        (
+                            approval_payload,
+                            approval_card,
+                            prep_error,
+                        ) = await prepare_edit_docx_approval(
+                            self._files, self._user_id, raw_arguments
+                        )
+                        if prep_error:
+                            yield ToolResultEvent(
+                                id=call_id, name=name, result=prep_error
+                            )
+                            conversation.append(
+                                build_tool_message(call_id, name, prep_error)
+                            )
+                            continue
+
                     yield ToolApprovalEvent(
-                        id=call_id, name=name, arguments=raw_arguments
+                        id=call_id,
+                        name=name,
+                        arguments=raw_arguments,
+                        approval_card=approval_card,
                     )
                     allowed = await self._approvals.wait(
                         conversation_id,
                         call_id,
                         timeout=self._settings.approval_timeout,
+                        payload=approval_payload,
                     )
                     if not allowed:
                         result = (
@@ -427,6 +457,32 @@ class AgentService:
                             "Do not retry the same write unless they ask."
                         )
                         logger.info("tool denied name=%s", name)
+                        yield ToolResultEvent(id=call_id, name=name, result=result)
+                        conversation.append(
+                            build_tool_message(call_id, name, result)
+                        )
+                        continue
+
+                    if name == "edit_docx" and self._files is not None:
+                        taken = self._approvals.take_payload(
+                            conversation_id, call_id
+                        )
+                        if taken is None:
+                            result = (
+                                "Error: approval payload missing, expired, or "
+                                "already applied; nothing written. Re-read and "
+                                "propose the edit again."
+                            )
+                        else:
+                            result = await apply_edit_docx_payload(
+                                self._files, self._user_id, taken
+                            )
+                        logger.info(
+                            "tool result name=%s chars=%s preview=%s",
+                            name,
+                            len(result or ""),
+                            _preview(result),
+                        )
                         yield ToolResultEvent(id=call_id, name=name, result=result)
                         conversation.append(
                             build_tool_message(call_id, name, result)

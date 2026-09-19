@@ -94,7 +94,7 @@ function answerTextFromBlocks(blocks: Block[]): string {
     .trim()
 }
 
-const GATED_TOOLS = new Set(['write_file', 'convert_upload_to_docx'])
+const GATED_TOOLS = new Set(['write_file', 'convert_upload_to_docx', 'edit_docx'])
 
 /**
  * Stored messages come back as blocks. Turns written before blocks existed,
@@ -498,16 +498,26 @@ function pendingToolApproval(turns: Turn[], busy: boolean) {
           !block.approvalPending)
       if (!needsAllow) continue
       let fileName = 'document'
+      let card = null
       if (block.name === 'write_file') {
         fileName = writeFilePayload(block.args)?.name || 'document'
       } else if (block.name === 'convert_upload_to_docx') {
         const payload = convertUploadPayload(block.args)
         fileName = payload?.name || payload?.source || 'document'
+      } else if (block.name === 'edit_docx') {
+        try {
+          const parsed = JSON.parse(block.args || '{}') as { name?: string }
+          fileName = parsed.name || block.approvalCard?.file_name || 'document'
+        } catch {
+          fileName = block.approvalCard?.file_name || 'document'
+        }
+        card = block.approvalCard ?? null
       }
       return {
         callId: block.id,
         toolName: block.name,
         fileName,
+        card,
         pending: Boolean(block.approvalPending),
       }
     }
@@ -1000,6 +1010,7 @@ function ChatPageInner() {
                         callId: approval.callId,
                         toolName: approval.toolName,
                         fileName: approval.fileName,
+                        card: approval.card,
                         pending: approval.pending,
                         onAllow: () => void resolveApproval(approval.callId, true),
                         onDeny: () => void resolveApproval(approval.callId, false),

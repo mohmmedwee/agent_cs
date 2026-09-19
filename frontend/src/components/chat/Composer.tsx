@@ -3,6 +3,10 @@ import { useTranslation } from 'react-i18next'
 
 import { ModelEffortPicker } from '@/components/chat/ModelEffortPicker'
 import {
+  ApprovalDiffCard,
+  type ApprovalCard,
+} from '@/components/chat/ApprovalDiffCard'
+import {
   ComposerPlusMenu,
   type ComposerTools,
 } from '@/components/chat/ComposerPlusMenu'
@@ -19,6 +23,7 @@ export interface ComposerApproval {
   toolName: string
   fileName: string
   pending: boolean
+  card?: ApprovalCard | null
   onAllow: () => void
   onDeny: () => void
 }
@@ -215,13 +220,19 @@ export function Composer({
             aria-label={t('chat.approvalTitle')}
           >
             <p className="text-sm font-medium text-ink">{t('chat.approvalTitle')}</p>
-            <p className="mt-0.5 text-xs text-ink-2" dir="auto">
-              {approval.toolName === 'run_python'
-                ? t('chat.approvalRunPython')
-                : approval.toolName === 'convert_upload_to_docx'
-                  ? t('chat.approvalConvert', { name: approval.fileName })
-                  : t('chat.approvalWrite', { name: approval.fileName })}
-            </p>
+            {approval.card ? (
+              <ApprovalDiffCard card={approval.card} />
+            ) : (
+              <p className="mt-0.5 text-xs text-ink-2" dir="auto">
+                {approval.toolName === 'run_python'
+                  ? t('chat.approvalRunPython')
+                  : approval.toolName === 'convert_upload_to_docx'
+                    ? t('chat.approvalConvert', { name: approval.fileName })
+                    : approval.toolName === 'edit_docx'
+                      ? t('chat.approvalEdit', { name: approval.fileName })
+                      : t('chat.approvalWrite', { name: approval.fileName })}
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"

@@ -158,10 +158,11 @@ class Settings(BaseSettings):
         default_factory=lambda: {
             "write_file",
             "convert_upload_to_docx",
+            "edit_docx",
         },
         description=(
             "Tool names that pause for human allow/deny before running. "
-            "write_file / convert_upload_to_docx publish downloadable bytes."
+            "write_file / convert_upload_to_docx / edit_docx publish or mutate files."
         ),
     )
     approval_timeout: float = Field(

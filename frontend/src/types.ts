@@ -1,4 +1,6 @@
 /** Events the server streams over SSE. Mirrors models/events.py. */
+import type { ApprovalCard } from '@/components/chat/ApprovalDiffCard'
+
 export type AgentEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'reasoning_delta'; text: string }
@@ -10,7 +12,13 @@ export type AgentEvent =
       arguments_chars: number
     }
   | { type: 'tool_call'; id: string; name: string; arguments: string }
-  | { type: 'tool_approval'; id: string; name: string; arguments: string }
+  | {
+      type: 'tool_approval'
+      id: string
+      name: string
+      arguments: string
+      approval_card?: ApprovalCard | null
+    }
   | { type: 'tool_result'; id: string; name: string; result: string }
   | { type: 'error'; message: string }
   | { type: 'done'; steps: number }
@@ -40,6 +48,8 @@ export type Block =
       awaitingApproval?: boolean
       /** Approval POST in flight. */
       approvalPending?: boolean
+      /** Server-built edit_docx diff card (render only). */
+      approvalCard?: ApprovalCard | null
     }
   | { kind: 'error'; message: string }
 

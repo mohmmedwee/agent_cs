@@ -268,6 +268,7 @@ def _agent_service(
     skills: SkillCatalogDep,
     approvals: ApprovalBrokerDep,
     memories: MemoryRepositoryDep,
+    files: FileRepositoryDep,
     user: CurrentUserDep,
 ) -> AgentService:
     return AgentService(
@@ -278,6 +279,7 @@ def _agent_service(
         approvals=approvals,
         memories=memories,
         user_id=user.id,
+        files=files,
     )
 
 

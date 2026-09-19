@@ -162,6 +162,7 @@ async def chat(
                     approvals=approvals,
                     memories=memories,
                     user_id=user_id,
+                    files=files,
                 )
                 try:
                     async for event in agent.run(

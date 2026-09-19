@@ -63,13 +63,15 @@ class ToolApprovalEvent(BaseModel):
     """Human-in-the-loop gate: the loop is paused until allow/deny.
 
     Emitted after `tool_call` and before `tool_result` for tools listed in
-    `approval_required_tools`.
+    `approval_required_tools`. For `edit_docx`, `approval_card` is a
+    server-built plaintext diff the Composer renders as-is.
     """
 
     type: Literal["tool_approval"] = "tool_approval"
     id: str
     name: str
     arguments: str
+    approval_card: dict | None = None
 
 
 class ToolResultEvent(BaseModel):
