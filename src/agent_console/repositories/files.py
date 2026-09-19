@@ -26,6 +26,7 @@ from agent_console.storage.blob_store import BlobStore
 __all__ = [
     "FileRepository",
     "FileTooLargeError",
+    "InvalidDerivedFromError",
     "UnknownFileError",
     "UnreadableFileError",
 ]
@@ -37,6 +38,10 @@ class UnknownFileError(LookupError):
 
 class FileTooLargeError(ValueError):
     """The upload exceeded the configured size limit."""
+
+
+class InvalidDerivedFromError(ValueError):
+    """A tip edit claimed markdown/text provenance — only convert may do that."""
 
 
 class UnreadableFileError(ValueError):
@@ -101,7 +106,8 @@ class FileRepository:
             version = (parent.version or 1) + 1
 
         # Only convert may claim markdown/text provenance. Tip edits that
-        # inherit derived_from=md would defeat the convert overwrite guard.
+        # pass derived_from=md would defeat the convert overwrite guard —
+        # reject so the call site is fixed, don't silently rewrite.
         if (
             derived_from is not None
             and not from_convert
@@ -111,7 +117,12 @@ class FileRepository:
             if source is not None and source.user_id == user_id:
                 src_name = source.name.lower()
                 if src_name.endswith((".md", ".markdown", ".txt")):
-                    derived_from = parent_id
+                    raise InvalidDerivedFromError(
+                        f"docx tip edit cannot set derived_from to text source "
+                        f"{source.name!r}; use parent_id for lineage and leave "
+                        f"derived_from as the previous tip (or omit it). "
+                        f"Only convert_upload_to_docx may set from_convert=True."
+                    )
 
         safe = _safe_name(name)
         storage_key = uuid4().hex

@@ -311,7 +311,8 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         if existing is not None:
             tip = await files.latest_in_chain(user_id, str(existing.id))
             # Tip must itself be a convert from this markdown. Edits must not
-            # inherit derived_from=md (save(..., from_convert=False) strips that).
+            # set derived_from=md (FileRepository rejects that without
+            # from_convert=True).
             if tip.derived_from != row.id:
                 return (
                     f"Error: {out_name} already has edits (or was not produced "

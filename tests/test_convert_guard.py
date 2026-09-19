@@ -122,7 +122,9 @@ async def test_convert_refuses_when_tip_was_edited_off_markdown(
 async def test_convert_refuses_after_edit_even_if_derived_from_copied_from_md(
     files: FileRepository, user: User, settings
 ) -> None:
-    """md → convert → edit (mistakenly derived_from=md) → reconvert must error."""
+    """md → convert → edit → reconvert must error; derived_from=md is rejected."""
+    from agent_console.repositories.files import InvalidDerivedFromError
+
     md = await files.save(
         user.id,
         name="guard3.md",
@@ -137,16 +139,24 @@ async def test_convert_refuses_after_edit_even_if_derived_from_copied_from_md(
     assert out1.startswith("Converted")
     tip = await files.latest_in_chain(user.id, "guard3.docx")
     body = await files.raw_bytes(user.id, str(tip.id))
-    edited = await files.save(
+
+    with pytest.raises(InvalidDerivedFromError, match="cannot set derived_from"):
+        await files.save(
+            user.id,
+            name="guard3.docx",
+            data=body + b"|EDIT",
+            parent_id=tip.id,
+            derived_from=md.id,
+        )
+
+    # Legitimate tip edit uses parent tip as provenance, not the markdown.
+    await files.save(
         user.id,
         name="guard3.docx",
         data=body + b"|EDIT",
         parent_id=tip.id,
-        # Would defeat a naive tip.derived_from == md check if accepted as-is.
-        derived_from=md.id,
+        derived_from=tip.id,
     )
-    assert edited.derived_from != md.id
-    assert edited.derived_from == tip.id
     out2 = await registry.invoke(
         "convert_upload_to_docx",
         json.dumps({"source": "guard3.md", "theme": "cleverso"}),
