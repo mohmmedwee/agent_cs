@@ -131,30 +131,16 @@ def _docx_text(data: bytes) -> str | None:
     picks them up too — without trying to reconstruct the table layout.
     Images are omitted here so agent context stays small; use
     `docx_preview_markdown` for the UI preview.
+
+    Per-paragraph join rules live in `services.docx_blocks` so `edit_docx`
+    block IDs stay aligned with what the agent reads.
     """
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            document = archive.read("word/document.xml")
-    except (zipfile.BadZipFile, KeyError):
-        return None
+    from agent_console.services.docx_blocks import block_texts
 
     try:
-        root = ElementTree.fromstring(document)
-    except ElementTree.ParseError:
+        lines = block_texts(data)
+    except ValueError:
         return None
-
-    lines: list[str] = []
-    for paragraph in root.iter(f"{_WORD_NS}p"):
-        parts: list[str] = []
-        for node in paragraph.iter():
-            tag = node.tag
-            if tag == f"{_WORD_NS}t":
-                parts.append(node.text or "")
-            elif tag == f"{_WORD_NS}tab":
-                parts.append("\t")
-            elif tag == f"{_WORD_NS}br":
-                parts.append("\n")
-        lines.append("".join(parts).strip())
 
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
     return text or None
