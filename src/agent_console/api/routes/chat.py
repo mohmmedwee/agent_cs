@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterable
-from pathlib import Path
 from uuid import UUID
 
 import httpx
@@ -47,8 +46,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-
 
 class StopChatRequest(BaseModel):
     conversation_id: UUID
@@ -56,11 +53,6 @@ class StopChatRequest(BaseModel):
 
 class WatchChatRequest(BaseModel):
     conversation_id: UUID
-
-
-def _upload_dir(settings) -> Path:
-    path = Path(settings.upload_dir)
-    return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 @router.post("/chat", response_model=None)
@@ -111,7 +103,7 @@ async def chat(
     text_parts: list[str] = []
     conversation_key = str(request.conversation_id)
     cancel = asyncio.Event()
-    upload_dir = _upload_dir(settings)
+    blob_store = state.blob_store
 
     async def produce() -> None:
         # Own session for the whole run — must outlive the HTTP request that
@@ -120,7 +112,7 @@ async def chat(
         try:
             async with factory() as session:
                 files = FileRepository(
-                    session, upload_dir, settings.max_upload_bytes
+                    session, blob_store, settings.max_upload_bytes
                 )
                 memories = MemoryRepository(
                     session,
@@ -178,7 +170,7 @@ async def chat(
                             break
                         payload = event.model_dump()
                         _collect(payload, blocks, text_parts)
-                        jobs.publish(conversation_key, payload)
+                        await jobs.publish(conversation_key, payload)
                 except asyncio.CancelledError:
                     logger.info("chat job cancelled for %s", conversation_key)
                     raise
@@ -186,9 +178,9 @@ async def chat(
                     logger.exception("chat job failed for %s", conversation_key)
                     error_payload = {"type": "error", "message": str(exc)}
                     _collect(error_payload, blocks, text_parts)
-                    jobs.publish(conversation_key, error_payload)
+                    await jobs.publish(conversation_key, error_payload)
                 finally:
-                    approvals.cancel_conversation(conversation_key)
+                    await approvals.cancel_conversation(conversation_key)
                     _close_open_tools(blocks)
                     try:
                         await ConversationRepository(session).append(
@@ -221,11 +213,11 @@ async def chat(
                 logger.exception(
                     "auto-title failed for %s", request.conversation_id
                 )
-            jobs.publish(conversation_key, None)
+            await jobs.publish(conversation_key, None)
 
-    jobs.spawn(conversation_key, produce(), cancel)
+    await jobs.start(conversation_key, produce(), cancel)
 
-    return _sse_from_job(jobs, conversation_key)
+    return await _sse_from_job(jobs, conversation_key)
 
 
 @router.post("/chat/watch", response_model=None)
@@ -244,9 +236,11 @@ async def watch_chat(
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
     key = str(body.conversation_id)
-    if not jobs.is_active(key):
+    # Allow attach while the run is live or still in the brief done-tombstone
+    # window so a refresh that lands just after completion can replay events.
+    if not await jobs.has_job(key):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no active run for this chat")
-    return _sse_from_job(jobs, key)
+    return await _sse_from_job(jobs, key)
 
 
 @router.get("/chat/active/{conversation_id}")
@@ -263,7 +257,7 @@ async def chat_active(
             await ConversationRepository(session).get(user.id, conversation_id)
         except UnknownConversationError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    return {"active": jobs.is_active(str(conversation_id))}
+    return {"active": await jobs.is_active(str(conversation_id))}
 
 
 @router.post("/chat/stop", status_code=status.HTTP_204_NO_CONTENT)
@@ -283,8 +277,8 @@ async def stop_chat(
 
     key = str(body.conversation_id)
     jobs: ChatJobBroker = http_request.app.state.chat_jobs
-    jobs.stop(key)
-    approvals.cancel_conversation(key)
+    await jobs.stop(key)
+    await approvals.cancel_conversation(key)
 
 
 @router.post("/chat/approve", status_code=status.HTTP_204_NO_CONTENT)
@@ -303,15 +297,19 @@ async def approve_tool(
         except UnknownConversationError as exc:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
-    if not approvals.resolve(str(body.conversation_id), body.call_id, body.allowed):
+    if not await approvals.resolve(
+        str(body.conversation_id), body.call_id, body.allowed
+    ):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "No pending approval for this tool call (expired or already decided).",
         )
 
 
-def _sse_from_job(jobs: ChatJobBroker, conversation_key: str) -> EventSourceResponse:
-    attached = jobs.subscribe(conversation_key)
+async def _sse_from_job(
+    jobs: ChatJobBroker, conversation_key: str
+) -> EventSourceResponse:
+    attached = await jobs.subscribe(conversation_key)
     if attached is None:
 
         async def empty() -> AsyncIterable[str]:
@@ -338,7 +336,7 @@ def _sse_from_job(jobs: ChatJobBroker, conversation_key: str) -> EventSourceResp
             )
             return
         finally:
-            jobs.unsubscribe(conversation_key, queue)
+            await jobs.unsubscribe(conversation_key, queue)
 
     return EventSourceResponse(
         stream(),

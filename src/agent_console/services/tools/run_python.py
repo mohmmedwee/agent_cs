@@ -183,6 +183,39 @@ def _is_user_output(path: Path, cwd: Path) -> bool:
     return True
 
 
+def _collect_output_paths(cwd: Path, staged: set[str]) -> list[Path]:
+    """Walk the sandbox cwd without following symlinks; stay under cwd."""
+    root = cwd.resolve()
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(cwd, followlinks=False):
+        base = Path(dirpath)
+        # Don't descend into symlink directories (followlinks=False already,
+        # but also prune hidden / cache dirs early).
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if not name.startswith(".")
+            and not name.startswith("_")
+            and name != "__pycache__"
+            and not (base / name).is_symlink()
+        ]
+        for name in filenames:
+            path = base / name
+            if path.is_symlink():
+                continue
+            if not path.is_file():
+                continue
+            if path.name in staged:
+                continue
+            try:
+                if not path.resolve().is_relative_to(root):
+                    continue
+            except (OSError, ValueError):
+                continue
+            if _is_user_output(path, cwd):
+                found.append(path)
+    return sorted(found)
+
 def register(registry: ToolRegistry, context: ToolContext) -> None:
     files = context.files
     user_id = context.user_id
@@ -328,15 +361,17 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
 
             saved: list[str] = []
             errors: list[str] = []
-            produced = sorted(
-                path
-                for path in cwd.rglob("*")
-                if path.is_file()
-                and path.name not in staged
-                and _is_user_output(path, cwd)
-            )
+            produced = _collect_output_paths(cwd, staged)
+            max_bytes = settings.max_upload_bytes
             for path in produced[:_MAX_OUTPUT_FILES]:
                 try:
+                    size = path.stat().st_size
+                    if size > max_bytes:
+                        errors.append(
+                            f"{path.name}: {size} bytes exceeds limit "
+                            f"({max_bytes} bytes)"
+                        )
+                        continue
                     data = path.read_bytes()
                     row = await files.save(
                         user_id,

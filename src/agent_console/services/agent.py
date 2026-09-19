@@ -6,6 +6,7 @@ after `max_steps` rounds.
 """
 
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from datetime import datetime
 import json
 import logging
@@ -261,41 +262,43 @@ class AgentService:
                 active_effort or "default",
             )
             try:
-                chunks = self._upstream.stream_completion(
-                    model=chosen,
-                    messages=conversation,
-                    tools=self._tools.schemas,
-                    known_tool_names=self._tools.names,
-                    effort=active_effort,
-                    max_tokens=self._completion_budget(active_effort),
-                )
-                async for chunk in chunks:
-                    if chunk.text is not None:
-                        streamed_text.append(chunk.text)
-                        joined = "".join(streamed_text)
-                        if is_runaway_repetition(joined):
-                            # Stop feeding the UI more spam; keep a short laugh.
-                            cut_runaway = True
-                            cleaned = trim_runaway_tail(joined)
-                            # Only the excess beyond what we already showed.
-                            already = len(joined) - len(chunk.text)
-                            if len(cleaned) > already:
-                                yield TextDeltaEvent(text=cleaned[already:])
-                            assistant_message = {
-                                "role": "assistant",
-                                "content": cleaned,
-                            }
-                            break
-                        yield TextDeltaEvent(text=chunk.text)
-                    elif chunk.reasoning is not None:
-                        saw_reasoning = True
-                        yield ReasoningDeltaEvent(text=chunk.reasoning)
-                    elif chunk.tool_progress is not None:
-                        yield ToolCallDeltaEvent(**chunk.tool_progress)
-                    else:
-                        assistant_message = chunk.message
-                        if cut_runaway:
-                            break
+                async with aclosing(
+                    self._upstream.stream_completion(
+                        model=chosen,
+                        messages=conversation,
+                        tools=self._tools.schemas,
+                        known_tool_names=self._tools.names,
+                        effort=active_effort,
+                        max_tokens=self._completion_budget(active_effort),
+                    )
+                ) as chunks:
+                    async for chunk in chunks:
+                        if chunk.text is not None:
+                            streamed_text.append(chunk.text)
+                            joined = "".join(streamed_text)
+                            if is_runaway_repetition(joined):
+                                # Stop feeding the UI more spam; keep a short laugh.
+                                cut_runaway = True
+                                cleaned = trim_runaway_tail(joined)
+                                # Only the excess beyond what we already showed.
+                                already = len(joined) - len(chunk.text)
+                                if len(cleaned) > already:
+                                    yield TextDeltaEvent(text=cleaned[already:])
+                                assistant_message = {
+                                    "role": "assistant",
+                                    "content": cleaned,
+                                }
+                                break
+                            yield TextDeltaEvent(text=chunk.text)
+                        elif chunk.reasoning is not None:
+                            saw_reasoning = True
+                            yield ReasoningDeltaEvent(text=chunk.reasoning)
+                        elif chunk.tool_progress is not None:
+                            yield ToolCallDeltaEvent(**chunk.tool_progress)
+                        else:
+                            assistant_message = chunk.message
+                            if cut_runaway:
+                                break
             except (httpx.HTTPError, UpstreamError) as exc:
                 logger.warning("model call failed model=%s: %s", chosen, exc)
                 yield ErrorEvent(message=_describe_upstream_failure(exc))
@@ -409,10 +412,20 @@ class AgentService:
                         continue
 
                 if (
-                    conversation_id
-                    and name in self._settings.approval_required_tools
+                    name in self._settings.approval_required_tools
                     and name not in skip_approval
                 ):
+                    if not conversation_id:
+                        result = (
+                            "Error: this tool requires approval, which is "
+                            "unavailable in this context."
+                        )
+                        logger.info("tool denied name=%s reason=no-conversation", name)
+                        yield ToolResultEvent(id=call_id, name=name, result=result)
+                        conversation.append(
+                            build_tool_message(call_id, name, result)
+                        )
+                        continue
                     yield ToolApprovalEvent(
                         id=call_id, name=name, arguments=raw_arguments
                     )
@@ -524,20 +537,22 @@ class AgentService:
         logger.info("wrap-up call model=%s (tool budget spent)", model)
         answered = False
         try:
-            chunks = self._upstream.stream_completion(
-                model=model,
-                messages=conversation,
-                tools=[],
-                known_tool_names=set(),
-                effort=effort,
-                max_tokens=self._completion_budget(effort),
-            )
-            async for chunk in chunks:
-                if chunk.text is not None:
-                    answered = True
-                    yield TextDeltaEvent(text=chunk.text)
-                elif chunk.reasoning is not None:
-                    yield ReasoningDeltaEvent(text=chunk.reasoning)
+            async with aclosing(
+                self._upstream.stream_completion(
+                    model=model,
+                    messages=conversation,
+                    tools=[],
+                    known_tool_names=set(),
+                    effort=effort,
+                    max_tokens=self._completion_budget(effort),
+                )
+            ) as chunks:
+                async for chunk in chunks:
+                    if chunk.text is not None:
+                        answered = True
+                        yield TextDeltaEvent(text=chunk.text)
+                    elif chunk.reasoning is not None:
+                        yield ReasoningDeltaEvent(text=chunk.reasoning)
         except (httpx.HTTPError, UpstreamError) as exc:
             logger.warning("wrap-up failed model=%s: %s", model, exc)
             yield ErrorEvent(message=_describe_upstream_failure(exc))
