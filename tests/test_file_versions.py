@@ -42,17 +42,19 @@ async def test_edit_chain_a_to_b_to_c_keeps_both_changes(
 
 
 async def test_concurrent_child_of_same_parent_rejected(
-    files: FileRepository, user: User
+    files: FileRepository, user: User, blob_dir
 ) -> None:
-    """Two saves parenting the same tip must not both succeed (CAS / unique parent)."""
+    """Two saves parenting the same tip must not both succeed (CAS / unique parent).
+
+    The losing save must not leave an orphaned blob on disk.
+    """
     a = await files.save(user.id, name="doc.docx", data=b"A")
-    await files.save(
-        user.id, name="doc.docx", data=b"B1", parent_id=a.id
-    )
+    await files.save(user.id, name="doc.docx", data=b"B1", parent_id=a.id)
+    before = {p.name for p in blob_dir.iterdir()}
     with pytest.raises(IntegrityError):
-        await files.save(
-            user.id, name="doc.docx", data=b"B2", parent_id=a.id
-        )
+        await files.save(user.id, name="doc.docx", data=b"B2", parent_id=a.id)
+    after = {p.name for p in blob_dir.iterdir()}
+    assert after == before
 
 
 async def test_name_resolves_to_chain_tip(

@@ -310,9 +310,25 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             rtl=bool(rtl),
         )
 
+        # Linear chain: parent the current tip of this output name when it
+        # already exists; provenance of the markdown is derived_from.
+        parent_id = None
+        try:
+            existing = await files.get(user_id, out_name)
+        except UnknownFileError:
+            existing = None
+        if existing is not None:
+            tip = await files.latest_in_chain(user_id, str(existing.id))
+            parent_id = tip.id
+
         try:
             saved = await files.save(
-                user_id, name=out_name, data=data, content_type=DOCX_MEDIA_TYPE
+                user_id,
+                name=out_name,
+                data=data,
+                content_type=DOCX_MEDIA_TYPE,
+                parent_id=parent_id,
+                derived_from=row.id,
             )
         except FileTooLargeError as exc:
             return f"Error: {exc}"

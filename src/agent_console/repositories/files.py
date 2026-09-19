@@ -121,17 +121,22 @@ class FileRepository:
             version=version,
         )
         self._session.add(row)
-        # Flush first so we can set root_id = id for new roots, and so a unique
-        # parent_id violation surfaces before we pretend the write succeeded.
-        await self._session.flush()
-        if parent_id is None:
-            row.root_id = row.id
-            row.version = 1
-        # Commit now — the chat job holds this session open until the whole
-        # turn ends, but the UI fetches /api/files/{id}/download as soon as
-        # the tool result streams. A flush-only write is invisible to that
-        # other request, which then 404s with "no uploaded file matches".
-        await self._session.commit()
+        try:
+            # Flush first so we can set root_id = id for new roots, and so a unique
+            # parent_id violation surfaces before we pretend the write succeeded.
+            await self._session.flush()
+            if parent_id is None:
+                row.root_id = row.id
+                row.version = 1
+            # Commit now — the chat job holds this session open until the whole
+            # turn ends, but the UI fetches /api/files/{id}/download as soon as
+            # the tool result streams. A flush-only write is invisible to that
+            # other request, which then 404s with "no uploaded file matches".
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            self._store.delete(storage_key)
+            raise
         return row
 
     async def latest_in_chain(self, user_id: UUID, ref: str) -> StoredFileRow:
