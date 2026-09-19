@@ -300,6 +300,24 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         if not out_name.lower().endswith(".docx"):
             out_name = f"{out_name}.docx"
 
+        # Refuse to rebuild over a tip that was edited (or came from another
+        # source). Convert always regenerates from the markdown, so parenting
+        # the tip alone still wipes content — that was a live data-loss bug.
+        parent_id = None
+        try:
+            existing = await files.get(user_id, out_name)
+        except UnknownFileError:
+            existing = None
+        if existing is not None:
+            tip = await files.latest_in_chain(user_id, str(existing.id))
+            if tip.derived_from != row.id:
+                return (
+                    f"Error: {out_name} already has edits (or was not produced "
+                    f"from {row.name}). Converting would overwrite the tip. "
+                    "Use edit_docx on the current tip, or choose a new output name."
+                )
+            parent_id = tip.id
+
         data = build_docx(
             markdown,
             title=(title or "").strip(),
@@ -309,17 +327,6 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
             page_numbers=bool(page_numbers),
             rtl=bool(rtl),
         )
-
-        # Linear chain: parent the current tip of this output name when it
-        # already exists; provenance of the markdown is derived_from.
-        parent_id = None
-        try:
-            existing = await files.get(user_id, out_name)
-        except UnknownFileError:
-            existing = None
-        if existing is not None:
-            tip = await files.latest_in_chain(user_id, str(existing.id))
-            parent_id = tip.id
 
         try:
             saved = await files.save(
