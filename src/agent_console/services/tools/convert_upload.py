@@ -40,7 +40,12 @@ def _as_object_list(value: Any) -> list[dict[str, Any]]:
 
 def _apply_replacements(
     markdown: str, replacements: list[dict[str, Any]]
-) -> tuple[str, list[str]]:
+) -> tuple[str | None, list[str]]:
+    """Apply find/replace patches. Fail closed on 0 or ambiguous matches.
+
+    Returns (new_text, notes) on success, or (None, [error]) on failure.
+    Multiple matches require `count` (e.g. 1 = first only) or `replace_all: true`.
+    """
     notes: list[str] = []
     text = markdown
     for index, item in enumerate(replacements, start=1):
@@ -53,27 +58,38 @@ def _apply_replacements(
             notes.append(f"replacement {index}: skipped (empty find)")
             continue
         if len(find) > _MAX_PATCH_CHARS or len(repl) > _MAX_PATCH_CHARS:
-            notes.append(
-                f"replacement {index}: skipped (find/replace over "
-                f"{_MAX_PATCH_CHARS} chars — split the edit)"
-            )
-            continue
+            return None, [
+                f"Error: replacement {index}: find/replace over "
+                f"{_MAX_PATCH_CHARS} chars — split the edit."
+            ]
         hits = text.count(find)
+        preview = find if len(find) <= 80 else f"{find[:80]}…"
         if hits == 0:
-            preview = find if len(find) <= 80 else f"{find[:80]}…"
-            notes.append(f"replacement {index}: not found ({preview!r})")
-            continue
+            return None, [
+                f"Error: replacement {index}: not found ({preview!r})."
+            ]
+
         limit = item.get("count")
         try:
             limit_n = int(limit) if limit not in (None, "") else 0
         except (TypeError, ValueError):
             limit_n = 0
+        replace_all = bool(item.get("replace_all"))
+
         if limit_n > 0:
             text = text.replace(find, repl, limit_n)
-            notes.append(f"replacement {index}: replaced {min(hits, limit_n)}×")
-        else:
+            notes.append(
+                f"replacement {index}: replaced {min(hits, limit_n)}×"
+            )
+        elif replace_all or hits == 1:
             text = text.replace(find, repl)
             notes.append(f"replacement {index}: replaced {hits}×")
+        else:
+            return None, [
+                f"Error: replacement {index}: found {hits} matches for "
+                f"{preview!r}; pass count: 1 for the first only, or "
+                "replace_all: true to change all."
+            ]
     return text, notes
 
 
@@ -192,8 +208,9 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                     "type": "array",
                     "description": (
                         "Small find/replace edits. Each item: "
-                        '{"find":"old snippet","replace":"new snippet"}. '
-                        "Optional count: 1 = first match only."
+                        '{"find":"old","replace":"new"}. Exactly one match '
+                        "required unless count (e.g. 1 = first only) or "
+                        "replace_all: true is set. Zero matches fails the tool."
                     ),
                     "items": {
                         "type": "object",
@@ -201,6 +218,7 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                             "find": {"type": "string"},
                             "replace": {"type": "string"},
                             "count": {"type": "integer"},
+                            "replace_all": {"type": "boolean"},
                         },
                     },
                 },
@@ -263,7 +281,10 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         section_items = _as_object_list(sections)
 
         if replacement_items:
-            markdown, repl_notes = _apply_replacements(markdown, replacement_items)
+            patched, repl_notes = _apply_replacements(markdown, replacement_items)
+            if patched is None:
+                return repl_notes[0]
+            markdown = patched
             notes.extend(repl_notes)
 
         if section_items:

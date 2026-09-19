@@ -5,15 +5,33 @@ step. Searching first lets the model locate the relevant passage and spend its
 context on that instead.
 """
 
+from __future__ import annotations
+
+import re
+
 from agent_console.repositories.extraction import page_at_offset
 from agent_console.repositories.files import UnknownFileError, UnreadableFileError
 from agent_console.services.tools.context import ToolContext
 from agent_console.services.tools.registry import ToolRegistry
 
-__all__ = ["register"]
+__all__ = ["register", "find_ci"]
 
 _CONTEXT_CHARS = 160
 _MAX_HITS_PER_FILE = 5
+
+
+def find_ci(haystack: str, needle: str, *, start: int = 0) -> tuple[int, int] | None:
+    """Case-insensitive literal find; spans refer to the original haystack.
+
+    Avoids `haystack.lower()`, which can change string length for some Unicode
+    characters and drift character offsets.
+    """
+    if not needle:
+        return None
+    match = re.compile(re.escape(needle), re.IGNORECASE).search(haystack, start)
+    if match is None:
+        return None
+    return match.start(), match.end()
 
 
 def register(registry: ToolRegistry, context: ToolContext) -> None:
@@ -31,7 +49,10 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         parameters={
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Text to look for. Case-insensitive."},
+                "query": {
+                    "type": "string",
+                    "description": "Text to look for. Case-insensitive literal match.",
+                },
                 "name": {
                     "type": "string",
                     "description": "Optional: restrict the search to one file.",
@@ -41,12 +62,16 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
         },
     )
     async def search_uploaded_files(query: str, name: str | None = None) -> str:
-        needle = query.strip().lower()
+        needle = query.strip()
         if not needle:
             return "Error: query is empty."
 
         try:
-            rows = [await files.get(user_id, name)] if name else await files.list_for(user_id)
+            rows = (
+                [await files.get(user_id, name)]
+                if name
+                else await files.list_for(user_id)
+            )
         except UnknownFileError as exc:
             return f"Error: {exc}"
         if not rows:
@@ -60,20 +85,28 @@ def register(registry: ToolRegistry, context: ToolContext) -> None:
                 continue
 
             hits: list[str] = []
-            haystack = content.lower()
-            position = haystack.find(needle)
-            while position != -1 and len(hits) < _MAX_HITS_PER_FILE:
-                start = max(0, position - _CONTEXT_CHARS)
-                end = min(len(content), position + len(needle) + _CONTEXT_CHARS)
-                excerpt = " ".join(content[start:end].split())
-                page = page_at_offset(content, position)
-                where = f"page {page}, offset {position}" if page else f"offset {position}"
+            cursor = 0
+            more = False
+            while len(hits) < _MAX_HITS_PER_FILE:
+                span = find_ci(content, needle, start=cursor)
+                if span is None:
+                    break
+                start, end = span
+                excerpt_start = max(0, start - _CONTEXT_CHARS)
+                excerpt_end = min(len(content), end + _CONTEXT_CHARS)
+                excerpt = " ".join(content[excerpt_start:excerpt_end].split())
+                page = page_at_offset(content, start)
+                where = (
+                    f"page {page}, offset {start}" if page else f"offset {start}"
+                )
                 hits.append(f"  {where}: …{excerpt}…")
-                position = haystack.find(needle, position + len(needle))
+                cursor = end
+            else:
+                more = find_ci(content, needle, start=cursor) is not None
 
             if hits:
-                more = " (more matches not shown)" if position != -1 else ""
-                blocks.append(f"{row.name}{more}\n" + "\n".join(hits))
+                suffix = " (more matches not shown)" if more else ""
+                blocks.append(f"{row.name}{suffix}\n" + "\n".join(hits))
 
         if not blocks:
             return f"No matches for {query!r} in {len(rows)} file(s)."

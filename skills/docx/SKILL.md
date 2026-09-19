@@ -51,7 +51,8 @@ page_numbers: true
 
 ### Update content without rewriting the whole file
 
-**Find/replace snippets:**
+**Find/replace snippets** (exactly one match required, or set `count` /
+`replace_all`):
 
 ```text
 source: report.md
@@ -59,6 +60,7 @@ theme: cleverso
 replacements:
   - find: "Status: Draft"
     replace: "Status: Final"
+# If the phrase appears twice: count: 1  OR  replace_all: true
 ```
 
 **Rewrite one section** (heading match is case-insensitive / substring):
