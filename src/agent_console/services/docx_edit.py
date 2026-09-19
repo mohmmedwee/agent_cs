@@ -13,6 +13,7 @@ import io
 import re
 import zipfile
 from dataclasses import dataclass, field
+from typing import Any
 from xml.etree import ElementTree as ET
 
 from agent_console.services.docx_blocks import Block, Manifest, content_hash
@@ -22,7 +23,9 @@ __all__ = [
     "EditOp",
     "ValidationError",
     "ValidationResult",
+    "apply_approved_payload",
     "apply_ops",
+    "ops_from_payload",
     "package_entry_digests",
     "validate_ops",
 ]
@@ -93,7 +96,6 @@ def _replace_once(text: str, old: str, new: str) -> str:
     """Exact Unicode; Latin letters match case-insensitively for the find."""
     if not old:
         raise ValidationError("replace old text must be non-empty")
-    # Prefer exact match count first.
     exact_count = text.count(old)
     if exact_count == 1:
         return text.replace(old, new, 1)
@@ -101,7 +103,6 @@ def _replace_once(text: str, old: str, new: str) -> str:
         raise ValidationError(
             f"replace old text has {exact_count} matches; refine old or use count later"
         )
-    # Latin case-insensitive fallback when exact miss.
     pattern = re.compile(re.escape(old), re.IGNORECASE)
     matches = list(pattern.finditer(text))
     if len(matches) == 0:
@@ -123,7 +124,6 @@ def validate_ops(manifest: Manifest, ops: list[EditOp]) -> ValidationResult:
         raise ValidationError("no operations provided")
 
     diffs: list[BlockDiff] = []
-    # Working text map so sequential ops in one dry-run see prior replaces.
     texts: dict[str, str] = {b.id: b.text for b in manifest.blocks}
     hashes: dict[str, str] = {b.id: b.content_hash for b in manifest.blocks}
     insert_seq = 0
@@ -175,9 +175,7 @@ def validate_ops(manifest: Manifest, ops: list[EditOp]) -> ValidationResult:
             _require_block(manifest, op.relative_to)
             insert_seq += 1
             temp_id = op.new_id or f"new_{insert_seq}"
-            diffs.append(
-                BlockDiff(block_id=temp_id, before="", after=op.content)
-            )
+            diffs.append(BlockDiff(block_id=temp_id, before="", after=op.content))
 
         else:
             raise ValidationError(f"unknown op {kind!r}")
@@ -202,18 +200,38 @@ def _parent_map(root: ET.Element) -> dict[ET.Element, ET.Element]:
     return parents
 
 
+def _paragraph_has_sect_pr(paragraph: ET.Element) -> bool:
+    return next(paragraph.iter(f"{_WORD_NS}sectPr"), None) is not None
+
+
+def _is_sole_paragraph_in_table_cell(
+    paragraph: ET.Element, parent: ET.Element
+) -> bool:
+    if parent.tag != f"{_WORD_NS}tc":
+        return False
+    siblings = [c for c in parent if c.tag == f"{_WORD_NS}p"]
+    return len(siblings) == 1
+
+
 def _set_paragraph_text(paragraph: ET.Element, text: str) -> None:
-    """Write plain text into the paragraph, preferring the first existing `w:t`."""
-    text_nodes = [n for n in paragraph.iter(f"{_WORD_NS}t")]
-    if not text_nodes:
+    """Write plain text; ``\\n`` becomes ``w:br``; leading/trailing spaces preserved.
+
+    ElementTree escapes ``<>&`` on serialize. Existing runs/hyperlinks are replaced
+    so we never leave literal newlines inside ``w:t``.
+    """
+    for child in list(paragraph):
+        if child.tag in {f"{_WORD_NS}r", f"{_WORD_NS}hyperlink"}:
+            paragraph.remove(child)
+
+    parts = text.split("\n")
+    for index, part in enumerate(parts):
         run = ET.SubElement(paragraph, f"{_WORD_NS}r")
+        if index > 0:
+            ET.SubElement(run, f"{_WORD_NS}br")
         node = ET.SubElement(run, f"{_WORD_NS}t")
-        text_nodes = [node]
-    text_nodes[0].text = text
-    if text[:1].isspace() or text[-1:].isspace():
-        text_nodes[0].set(f"{_XML_NS}space", "preserve")
-    for node in text_nodes[1:]:
-        node.text = ""
+        node.text = part
+        if part[:1].isspace() or part[-1:].isspace():
+            node.set(f"{_XML_NS}space", "preserve")
 
 
 def _make_paragraph(text: str) -> ET.Element:
@@ -290,6 +308,16 @@ def apply_ops(
             assert op.block_id
             el = id_to_el[op.block_id]
             parent = parents[el]
+            if _paragraph_has_sect_pr(el):
+                raise ValidationError(
+                    f"refusing to delete {op.block_id}: paragraph holds sectPr "
+                    "(removing it corrupts the document)"
+                )
+            if _is_sole_paragraph_in_table_cell(el, parent):
+                raise ValidationError(
+                    f"refusing to delete {op.block_id}: it is the only paragraph "
+                    "in its table cell"
+                )
             parent.remove(el)
             before = texts[op.block_id]
             del id_to_el[op.block_id]
@@ -306,6 +334,19 @@ def apply_ops(
             children = list(parent)
             anchor_idx = children.index(anchor)
             insert_at = anchor_idx if position == "before" else anchor_idx + 1
+            # Keep body-level or paragraph-level sectPr after all paragraphs.
+            if (
+                position == "after"
+                and parent.tag == f"{_WORD_NS}body"
+                and _paragraph_has_sect_pr(anchor)
+            ):
+                insert_at = anchor_idx
+            elif position == "after" and parent.tag == f"{_WORD_NS}body":
+                # python-docx puts sectPr as a direct body child after the last p.
+                following = children[anchor_idx + 1 :] if anchor_idx + 1 < len(children) else []
+                if any(c.tag == f"{_WORD_NS}sectPr" for c in following):
+                    # Insert still after anchor p; sectPr stays last among body kids.
+                    insert_at = anchor_idx + 1
             parent.insert(insert_at, new_el)
             parents[new_el] = parent
             new_block_id = f"g{generation}:p_{next_id:04d}"
@@ -313,7 +354,14 @@ def apply_ops(
             id_to_el[new_block_id] = new_el
             texts[new_block_id] = op.content
             rel_idx = order.index(op.relative_to)
-            order.insert(rel_idx if position == "before" else rel_idx + 1, new_block_id)
+            order_at = rel_idx if position == "before" else rel_idx + 1
+            if (
+                position == "after"
+                and _paragraph_has_sect_pr(anchor)
+                and parent.tag == f"{_WORD_NS}body"
+            ):
+                order_at = rel_idx
+            order.insert(order_at, new_block_id)
             apply_diffs.append(
                 BlockDiff(block_id=new_block_id, before="", after=op.content)
             )
@@ -332,6 +380,52 @@ def apply_ops(
     new_manifest = Manifest(
         generation=generation, next_id=next_id, blocks=new_blocks
     )
-    # Prefer apply diffs (real insert ids); lengths should match dry-run.
     assert len(apply_diffs) == len(result.diffs)
     return out, new_manifest, apply_diffs
+
+
+def ops_from_payload(payload: dict[str, Any]) -> list[EditOp]:
+    """Rebuild EditOp list from a JSON approval payload."""
+    raw_ops = payload.get("operations") or []
+    if not isinstance(raw_ops, list) or not raw_ops:
+        raise ValidationError("approval payload has no operations")
+    ops: list[EditOp] = []
+    for item in raw_ops:
+        if not isinstance(item, dict):
+            raise ValidationError("invalid operation in approval payload")
+        ops.append(
+            EditOp(
+                op=str(item.get("op") or ""),
+                block_id=item.get("block_id"),
+                old=item.get("old"),
+                new=item.get("new"),
+                content=item.get("content"),
+                hash=item.get("hash"),
+                relative_to=item.get("relative_to"),
+                position=item.get("position"),
+                new_id=item.get("new_id"),
+            )
+        )
+    return ops
+
+
+def apply_approved_payload(
+    *,
+    broker: Any,
+    conversation_id: str,
+    call_id: str,
+    data: bytes,
+    manifest: Manifest,
+) -> tuple[bytes, Manifest, list[BlockDiff]]:
+    """Consume a single-use approval payload and apply it to tip bytes.
+
+    A second call with the same ids is rejected — insert replay would otherwise
+    pass revalidation and duplicate content.
+    """
+    payload = broker.take_payload(conversation_id, call_id)
+    if payload is None:
+        raise ValidationError(
+            "approval payload missing, expired, or already applied; "
+            "re-read and propose the edit again"
+        )
+    return apply_ops(data, manifest, ops_from_payload(payload))

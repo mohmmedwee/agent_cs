@@ -75,11 +75,12 @@ def test_manifest_carry_forward_insert_and_delete() -> None:
     data = _minimal_docx("A", "B", "C")
     manifest = assign_fresh_manifest(data, generation=1)
     assert manifest.next_id == 4
+    # Delete middle block — the last paragraph often holds sectPr.
     out, new_manifest, _ = apply_ops(
         data,
         manifest,
         [
-            EditOp(op="delete", block_id="g1:p_0003", hash=manifest.blocks[2].content_hash),
+            EditOp(op="delete", block_id="g1:p_0002", hash=manifest.blocks[1].content_hash),
             EditOp(
                 op="insert",
                 relative_to="g1:p_0001",
@@ -89,12 +90,13 @@ def test_manifest_carry_forward_insert_and_delete() -> None:
         ],
     )
     assert new_manifest.generation == 1
-    # Highest id deleted — next_id must not recycle to 3.
+    # Highest id was never assigned to the deleted middle — next_id advances
+    # for the insert only from the prior counter.
     assert new_manifest.next_id == 5
     ids = [b.id for b in new_manifest.blocks]
-    assert "g1:p_0003" not in ids
+    assert "g1:p_0002" not in ids
     assert "g1:p_0004" in ids  # insert took next_id 4
-    assert block_texts(out) == ["A", "Inserted", "B"]
+    assert block_texts(out) == ["A", "Inserted", "C"]
 
 
 def test_output_reopens_with_python_docx() -> None:
